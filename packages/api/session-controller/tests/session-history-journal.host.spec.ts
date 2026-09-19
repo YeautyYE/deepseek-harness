@@ -95,6 +95,32 @@ function pageEvents(page: SessionPage): SessionWireEvent[] {
 }
 
 describe('Session history raw journal', () => {
+  it('releases the opening observation while the live follow remains open', async () => {
+    const { ctx } = await harness()
+    const session = ctx.sessions.create(undefined, { meta: { cwd: '/workspace' } })
+    appendUserText(session, 'history')
+    const originalObserve = ctx.sessionQuery.observeSession.bind(ctx.sessionQuery)
+    const disposed = vi.fn()
+    const observe = vi.spyOn(ctx.sessionQuery, 'observeSession').mockImplementation(async (...args) => {
+      const source = await originalObserve(...args)
+      return { ...source, [Symbol.dispose]: () => { disposed(); source[Symbol.dispose]() } }
+    })
+    const history = new SessionHistoryController(ctx, (observation) => { observation[Symbol.dispose]() })
+    const abort = new AbortController()
+    const iterator = history.follow({
+      address: { kind: 'session', sessionId: session.id },
+    }, abort.signal)[Symbol.asyncIterator]()
+    try {
+      await expect(iterator.next()).resolves.toMatchObject({ done: false, value: { type: 'snapshot' } })
+      const appended = appendUserText(session, 'live')
+      await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: 'event', event: appended } })
+      expect(disposed).toHaveBeenCalledOnce()
+    } finally {
+      await disposeFollow(ctx, iterator, abort)
+      observe.mockRestore()
+    }
+  })
+
   it('opens an empty opted-in Assistant baseline before any live attempt exists', async () => {
     const { ctx } = await harness()
     const session = ctx.sessions.create(undefined, { meta: { cwd: '/workspace' } })

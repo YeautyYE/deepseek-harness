@@ -59,6 +59,7 @@ The inherited knobs are set through the mounted backend's config:
 | `readWindowMax` | `50` | Maximum `before`/`after` raw events accepted by `readEvent` |
 | `persistedReadConcurrency` | `4` | Concurrent persisted-log reads in one batch title read |
 | `preparedSessionCacheSize` | `5` | Cold prepared-Session observations retained for reuse across `observeSession` reads |
+| `preparedSessionCacheMaxBytes` | `33554432` | Estimated decoded header and event bytes retained across cold observations; `0` disables retention after active leases release |
 
 ### Failures and recovery
 
@@ -108,7 +109,9 @@ The decision history lives in the [unified service decision](../../../.agents/no
 
 ### Observation cache
 
-`observeSession` builds point observations without a listing preflight. A live observation fixes its cut as the current log length and materializes `events` on first read, so header-, cursor-, or projection-only consumers never copy the log; the log only appends, so a late first read still yields exactly that prefix. The cold path stats the stored session first and consults its own bounded cache keyed by the persistence instance and the `stat` revision: an unchanged revision reuses the restored unpublished Session without re-reading the log; a changed revision, or a replaced persistence instance, reloads through the handle seam and replaces the entry. The cache holds `preparedSessionCacheSize` entries with least-recently-used eviction, entries pinned by active observation leases are never evicted, and a session that goes live mid-read retries the live path.
+`observeSession` builds point observations without a listing preflight. A live observation fixes its cut as the current log length and materializes `events` on first read, so header-, cursor-, or projection-only consumers never copy the log; the log only appends, so a late first read still yields exactly that prefix. The cold path stats the stored session first and consults its own bounded cache keyed by the persistence instance and the `stat` revision: an unchanged revision reuses the restored unpublished Session without re-reading the log; a changed revision, or a replaced persistence instance, reloads through the handle seam and replaces the entry. The cache holds at most `preparedSessionCacheSize` entries and `preparedSessionCacheMaxBytes` estimated decoded bytes with least-recently-used eviction. Entries pinned by active observation leases remain valid until disposal and may temporarily exceed either bound. A session that goes live mid-read retries the live path and removes the cold duplicate.
+
+The byte estimate charges UTF-16 string storage, object overhead, and reference slots without serializing the log; estimation stops when one entry exceeds the configured budget. This bounds reuse, not total process memory: active reads, projection state, and live Sessions have their own owners.
 
 ### Reads and traces
 

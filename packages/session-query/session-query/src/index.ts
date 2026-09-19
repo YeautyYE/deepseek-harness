@@ -39,6 +39,7 @@ import type {
 } from './types.ts'
 import {
   SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY,
+  SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_MAX_BYTES,
   SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE,
   SESSION_QUERY_READ_WINDOW_MAX,
   SessionQueryError,
@@ -64,6 +65,7 @@ export { SessionSearchCursor } from './cursor.ts'
 export type { Config, SessionQueryErrorCode } from './config.ts'
 export {
   SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY,
+  SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_MAX_BYTES,
   SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE,
   SESSION_QUERY_READ_WINDOW_MAX,
   SessionQueryError,
@@ -127,8 +129,16 @@ export abstract class SessionQueryEngine extends Service {
         'SESSION_QUERY_INVALID_CONFIG',
       )
     }
+    const preparedSessionCacheMaxBytes = config.preparedSessionCacheMaxBytes
+      ?? SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_MAX_BYTES
+    if (!Number.isSafeInteger(preparedSessionCacheMaxBytes) || preparedSessionCacheMaxBytes < 0) {
+      throw new SessionQueryError(
+        'session-query: preparedSessionCacheMaxBytes must be a non-negative safe integer',
+        'SESSION_QUERY_INVALID_CONFIG',
+      )
+    }
     this._corpus = new SessionCorpus(ctx, persistedReadConcurrency)
-    this._observations = new SessionObservationReader(ctx, preparedSessionCacheSize)
+    this._observations = new SessionObservationReader(ctx, preparedSessionCacheSize, preparedSessionCacheMaxBytes)
   }
 
   /**

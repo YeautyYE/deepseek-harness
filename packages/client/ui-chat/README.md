@@ -66,6 +66,8 @@ Settings → General exposes a persisted, localized `Normal` / `Compact` convers
 
 Chat restores semantic anchors across history prepend and renderer remounts. Pinned scroll deliveries without reader movement update follow ownership immediately, before subsequent layout changes can invalidate their floor. Reader movement remains pending until the sampling interval or `scrollend`, even inside the follow threshold, so layout growth cannot erase small scroll gestures. While the reader is pinned to the floor, `ResizeObserver` follows the new floor and selects the latest loaded Turn without reading row geometry. Once the reader moves away, flow-height changes preserve the top position and the reading-line geometry selects the active Turn. Turn-rail previews paint above sticky Markdown code-block banners, while the rail frame remains inside the transcript band above the composer.
 
+Keyed node observers keep their identity while readers hold them, including across history-window replacement. Subscriptions retain their observer until the last listener unsubscribes; the cache permits unobserved, unreferenced observers to be collected.
+
 -----
 
 <a id="model-experience"></a>

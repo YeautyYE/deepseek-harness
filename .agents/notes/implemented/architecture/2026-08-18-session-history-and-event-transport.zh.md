@@ -165,7 +165,7 @@ Session Remote 方法传递 `SessionId` 或 `SessionAddress`，不靠参数类�
 
 读取 title、列表和投影不要求 Agent。观察操作不能因为另一个 Remote endpoint 使用了 Agent lookup 而继承其恢复权限。
 
-`SessionQuery.observeSession()` 选择 attached Session，或从读取方自己的 prepared cache——经由持久化读句柄填充——提供冷 Session。该 cache 共享并发冷读取，并在所有 observation lease 释放前固定同一条目。一次 observation 要么计算所有已注册 projection，要么完全不计算；调用方可以只公开其中一部分，但不会建立只计算部分 projection 的中间状态。
+`SessionQuery.observeSession()` 选择 attached Session，或从读取方自己的 prepared cache——经由持久化读句柄填充——提供冷 Session。该 cache 复用已完成的冷读取，并在所有 observation lease 释放前固定同一条目。一次 observation 要么计算所有已注册 projection，要么完全不计算；调用方可以只公开其中一部分，但不会建立只计算部分 projection 的中间状态。
 
 `session.list` 不会无界扫描冷日志。它优先使用缓存的 projection hint，仅在独立存储 artifact 不超过配置的小日志字节上限时，才可能完整观察日志以判断不确定的 blank 状态。hint 缺失或不可读时，列表仍保留该行，并把 metadata 视为未知。
 
@@ -183,7 +183,7 @@ tail page 同时携带不晚于 `throughSeq` 的 projection baseline；旧页只
 
 首次 follow 返回完整的 `{ type: 'snapshot', header, cursor, events, hasMore, projections }` frame。每次重连都发送另一份完整 snapshot replacement；协议不含 `afterSeq`。观察期间提交的 event 会保留在缓冲区，并在 snapshot 之后按 seq 发出。
 
-普通冷 Session 可以立即发布 prepared snapshot。首帧之后，Controller 把 retained observation 交给一次后台 promotion；follow 不等待激活。Direct-subagent 地址不会进入该 promotion 路径。
+普通冷 Session 可以立即发布 prepared snapshot。首帧之后，Controller 把 retained observation 交给一次后台 promotion；follow 不等待激活。Direct-subagent 地址不会进入该 promotion 路径。[历史保留决策](../bug-fix/2026-09-19-history-reader-retention.zh.md) 独立限制已完成首屏读取的内存，不让其依附于实时 follower 的生命周期。
 
 Client 的 `SessionEventStream` 继承 `RemoteJournalStream`，只提供 `session.follow`、`session.page`、Session seq 算法与 repair request。通用层直接校验并发布 opening snapshot；仅在读取更早历史或后续 event 暴露 seq gap 时调用 `session.page({ throughSeq })`。
 

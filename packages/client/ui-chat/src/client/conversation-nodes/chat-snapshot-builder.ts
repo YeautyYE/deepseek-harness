@@ -24,19 +24,6 @@ function sameReferences<T>(left: readonly T[], right: readonly T[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
-function cachedSource<Key, Source>(
-  sources: Map<Key, Source>,
-  key: Key,
-  create: () => Source,
-): Source {
-  let source = sources.get(key)
-  if (source === undefined) {
-    source = create()
-    sources.set(key, source)
-  }
-  return source
-}
-
 /* jscpd:ignore-start -- Chat Node sources keep publication state inside the keyed Chat store. */
 class MutableChatSource<Value> {
   private readonly listeners = new Set<() => void>()
@@ -45,6 +32,7 @@ class MutableChatSource<Value> {
   constructor(
     private readonly read: () => Value,
     private readonly label: string,
+    private readonly observed: (source: MutableChatSource<Value>, active: boolean) => void,
   ) {
     this.published = read()
   }
@@ -53,7 +41,11 @@ class MutableChatSource<Value> {
 
   readonly subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
-    return () => { this.listeners.delete(listener) }
+    this.observed(this, true)
+    return () => {
+      this.listeners.delete(listener)
+      if (this.listeners.size === 0) this.observed(this, false)
+    }
   }
 
   publish(): void {
@@ -65,11 +57,43 @@ class MutableChatSource<Value> {
 }
 /* jscpd:ignore-end */
 
+/** Readers preserve source identity; subscriptions keep notifications alive until unsubscribe. */
+class ChatSources<Value> {
+  private readonly sources = new Map<string, WeakRef<MutableChatSource<Value>>>()
+  private readonly observed = new Set<MutableChatSource<Value>>()
+  private readonly collected = new FinalizationRegistry<{
+    key: string
+    reference: WeakRef<MutableChatSource<Value>>
+  }>(({ key, reference }) => {
+    if (this.sources.get(key) === reference) this.sources.delete(key)
+  })
+
+  constructor(private readonly read: (key: string) => Value, private readonly label: string) {}
+
+  source(key: string): MutableChatSource<Value> {
+    let source = this.sources.get(key)?.deref()
+    if (source === undefined) {
+      source = new MutableChatSource(() => this.read(key), `${this.label} ${key}`, (value, active) => {
+        if (active) this.observed.add(value)
+        else this.observed.delete(value)
+      })
+      const reference = new WeakRef(source)
+      this.sources.set(key, reference)
+      this.collected.register(source, { key, reference })
+    }
+    return source
+  }
+
+  publish(key: string): void {
+    this.sources.get(key)?.deref()?.publish()
+  }
+}
+
 class MutableChatNodeStore implements ChatNodeStore {
   private readonly byKey = new Map<string, ChatConversationViewNode>()
   private readonly turnProcesses = new ChatTurnProcessProjector()
-  private readonly sources = new Map<string, MutableChatSource<ChatConversationViewNode | undefined>>()
-  private readonly processSources = new Map<string, MutableChatSource<ChatTurnProcessPresentation | undefined>>()
+  private readonly sources = new ChatSources(key => this.get(key), '[ui-chat] node source')
+  private readonly processSources = new ChatSources(key => this.process(key), '[ui-chat] node process source')
   private readonly dirtyKeys = new Set<string>()
   private readonly dirtyProcessKeys = new Set<string>()
   private valuesCache: readonly ChatConversationViewNode[] = EMPTY_LIST
@@ -80,17 +104,11 @@ class MutableChatNodeStore implements ChatNodeStore {
   }
 
   source(key: string): ChatNodeSource {
-    return cachedSource(this.sources, key, () => new MutableChatSource(
-      () => this.get(key),
-      `[ui-chat] node source ${key}`,
-    ))
+    return this.sources.source(key)
   }
 
   processSource(key: string): ChatNodeProcessSource {
-    return cachedSource(this.processSources, key, () => new MutableChatSource(
-      () => this.process(key),
-      `[ui-chat] node process source ${key}`,
-    ))
+    return this.processSources.source(key)
   }
 
   process(key: string): ChatTurnProcessPresentation | undefined {
@@ -155,8 +173,8 @@ class MutableChatNodeStore implements ChatNodeStore {
     const dirtyProcesses = [...this.dirtyProcessKeys]
     this.dirtyKeys.clear()
     this.dirtyProcessKeys.clear()
-    for (const key of dirty) this.sources.get(key)?.publish()
-    for (const key of dirtyProcesses) this.processSources.get(key)?.publish()
+    for (const key of dirty) this.sources.publish(key)
+    for (const key of dirtyProcesses) this.processSources.publish(key)
   }
 }
 

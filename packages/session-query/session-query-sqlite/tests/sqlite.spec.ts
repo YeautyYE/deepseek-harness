@@ -707,6 +707,8 @@ describe('SQLite session search', () => {
       { path: ':memory:', persistedReadConcurrency: Number.MAX_SAFE_INTEGER + 1 },
       { path: ':memory:', preparedSessionCacheSize: 0 },
       { path: ':memory:', preparedSessionCacheSize: Number.MAX_SAFE_INTEGER + 1 },
+      { path: ':memory:', preparedSessionCacheMaxBytes: -1 },
+      { path: ':memory:', preparedSessionCacheMaxBytes: Number.MAX_SAFE_INTEGER + 1 },
       { path: ':memory:', defaultLimit: 3, maxLimit: 2 },
       { path: ':memory:', openAt: 'later' },
       { path: ':memory:', journalMode: 'memory' },

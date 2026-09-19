@@ -10,7 +10,11 @@ import type {
 } from '@deepseek-ai/dsh-session-persistence'
 import type { ProjectionSnapshot } from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-session-projection-cache'
-import { SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE, SessionQueryError } from './config.ts'
+import {
+  SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_MAX_BYTES,
+  SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE,
+  SessionQueryError,
+} from './config.ts'
 import { readColdSessionLog, type ColdSessionLog } from './cold-read.ts'
 
 /** One exact immutable Session cut retained for the caller's read lifetime. */
@@ -62,6 +66,8 @@ interface PreparedEntry {
   readonly session: Session
   /** Immutable balanced log (stored events plus in-memory interrupted-turn closers). */
   readonly events: readonly SessionEvent[]
+  /** Estimated decoded header/log weight, capped just above the configured budget. */
+  readonly bytes: number
   /** Active observation leases; a pinned entry (`refs > 0`) is never evicted. */
   refs: number
 }
@@ -78,14 +84,17 @@ interface PreparedEntry {
  */
 export class SessionObservationReader {
   private readonly cache = new Map<SessionId, PreparedEntry>()
+  private cacheBytes = 0
 
   /**
    * @param ctx - context carrying Session and optional persistence/projection services.
-   * @param cacheCapacity - maximum unpinned cold observations retained for reuse.
+   * @param cacheCapacity - maximum retained cold observations; active leases remain protected from eviction.
+   * @param cacheMaxBytes - maximum estimated decoded-log bytes retained after leases release.
    */
   constructor(
     private readonly ctx: Context,
     private readonly cacheCapacity: number = SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE,
+    private readonly cacheMaxBytes: number = SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_MAX_BYTES,
   ) {}
 
   /**
@@ -142,9 +151,9 @@ export class SessionObservationReader {
           revision: snapshot.revision,
           session,
           events: Object.freeze(seed),
+          bytes: decodedLogWeight([session.header, seed], this.cacheMaxBytes),
           refs: 0,
         }
-        this.store(sessionId, entry)
       }
 
       let projections: ProjectionSnapshot | undefined
@@ -157,7 +166,9 @@ export class SessionObservationReader {
           { cause: error },
         )
       }
-      return this.preparedLease(sessionId, entry, projections)
+      const observed = this.preparedLease(sessionId, entry, projections)
+      this.store(sessionId, entry)
+      return observed
     }
   }
 
@@ -206,7 +217,9 @@ export class SessionObservationReader {
     revision: SessionPersistenceRevision,
   ): PreparedEntry | undefined {
     const cached = this.cache.get(sessionId)
-    if (cached === undefined || cached.persistence !== persistence || cached.revision !== revision) {
+    if (cached === undefined) return undefined
+    if (cached.persistence !== persistence || cached.revision !== revision) {
+      this.remove(sessionId)
       return undefined
     }
     this.cache.delete(sessionId)
@@ -218,23 +231,31 @@ export class SessionObservationReader {
   private store(sessionId: SessionId, entry: PreparedEntry): void {
     // Replacing a stale revision only drops the map's reference; live leases
     // keep the old entry alive through their own references.
-    this.cache.delete(sessionId)
+    this.remove(sessionId)
     this.cache.set(sessionId, entry)
-    this.evictPastCapacity(entry)
+    this.cacheBytes += entry.bytes
+    this.evictPastCapacity()
+  }
+
+  /** Release only cache ownership; outstanding leases keep their immutable data. */
+  private remove(sessionId: SessionId): void {
+    const entry = this.cache.get(sessionId)
+    if (entry === undefined) return
+    this.cacheBytes -= entry.bytes
+    this.cache.delete(sessionId)
   }
 
   /**
    * Evict oldest unpinned entries until the cache fits its capacity again.
    * Runs on store and whenever a lease release unpins an entry, so leases
    * that pinned every candidate cannot leave the cache over budget for good.
-   * @param keep - the entry being stored, about to be leased; never evicted.
    */
-  private evictPastCapacity(keep?: PreparedEntry): void {
-    if (this.cache.size <= this.cacheCapacity) return
+  private evictPastCapacity(): void {
+    if (this.cache.size <= this.cacheCapacity && this.cacheBytes <= this.cacheMaxBytes) return
     for (const [id, candidate] of this.cache) {
-      if (candidate === keep || candidate.refs > 0) continue
-      this.cache.delete(id)
-      if (this.cache.size <= this.cacheCapacity) return
+      if (candidate.refs > 0) continue
+      this.remove(id)
+      if (this.cache.size <= this.cacheCapacity && this.cacheBytes <= this.cacheMaxBytes) return
     }
   }
 
@@ -275,6 +296,7 @@ export class SessionObservationReader {
     session: Session,
     projectionMode: NonNullable<SessionObservationOptions['projectionMode']>,
   ): SessionObservation {
+    this.remove(session.id)
     // The cut is the log length now. The log only appends, so the prefix
     // below `seq` is the same array whenever a consumer first reads `events`.
     const seq = session.seq
@@ -312,6 +334,42 @@ export class SessionObservationReader {
     return cache === undefined
       ? registry.hydrate(entry.session, {}, entry.events, SessionLogOffset(0))
       : cache.hydratePrepared(entry.session, entry.events)
+  }
+}
+
+/** Estimate decoded JSON storage without serializing strings or walking beyond the budget. */
+function decodedLogWeight(values: readonly unknown[], limit: number): number {
+  let bytes = 0
+  const seen = new WeakSet<object>()
+  const pending: Iterator<unknown>[] = [values.values()]
+  for (let iterator = pending.at(-1); iterator !== undefined; iterator = pending.at(-1)) {
+    const next = iterator.next()
+    if (next.done === true) {
+      pending.pop()
+      continue
+    }
+    const value: unknown = next.value
+    if (typeof value === 'string') {
+      bytes += 32 + value.length * 2
+    } else if (value !== null && typeof value === 'object') {
+      if (seen.has(value)) continue
+      seen.add(value)
+      bytes += 64
+      pending.push(Array.isArray(value) ? value.values() : propertyValues(value))
+    } else {
+      bytes += 8
+    }
+    // Charge each reference slot, including the prepared Session's log indexes.
+    bytes += 16
+    if (bytes > limit) return limit + 1
+  }
+  return bytes
+}
+
+function* propertyValues(value: object): Generator {
+  for (const key of Object.keys(value)) {
+    yield key
+    yield (value as Record<string, unknown>)[key]
   }
 }
 

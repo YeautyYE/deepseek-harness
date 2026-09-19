@@ -165,7 +165,7 @@ Each method explicitly selects a cold inspection, live-only lookup, or resume-ca
 
 Reading titles, lists, and projections does not require an Agent. An observation operation cannot inherit resume authority merely because another Remote endpoint uses Agent lookup.
 
-`SessionQuery.observeSession()` chooses an attached Session or serves a cold one from the reader's own prepared cache, filled through a persistence read handle. The cache shares concurrent cold reads and pins an entry until every observation lease is released. An observation computes either all registered projections or none; callers may expose a subset, but no caller creates a partial projection state.
+`SessionQuery.observeSession()` chooses an attached Session or serves a cold one from the reader's own prepared cache, filled through a persistence read handle. The cache reuses completed cold reads and pins an entry until every observation lease is released. An observation computes either all registered projections or none; callers may expose a subset, but no caller creates a partial projection state.
 
 `session.list` never performs an unbounded cold-log scan. It uses cached projection hints when available and may fully observe only an individually stored artifact within the configured small-log byte limit to distinguish an abandoned blank Session. Missing or unreadable hints keep the row visible with unknown metadata.
 
@@ -183,7 +183,7 @@ Ordinary Sessions and direct subagents use one `SessionAddress` protocol. A dire
 
 The first follow response is a complete `{ type: 'snapshot', header, cursor, events, hasMore, projections }` frame. Every reconnect sends another complete snapshot replacement; the protocol has no `afterSeq`. Events committed during observation remain buffered and are emitted after the snapshot in sequence order.
 
-A cold ordinary Session can publish its prepared snapshot immediately. After that first frame, the Controller transfers a retained observation to one background promotion; follow does not wait for activation. Direct-subagent addresses never use this promotion path.
+A cold ordinary Session can publish its prepared snapshot immediately. After that first frame, the Controller transfers a retained observation to one background promotion; follow does not wait for activation. Direct-subagent addresses never use this promotion path. The [history retention decision](../bug-fix/2026-09-19-history-reader-retention.md) bounds the completed opening's memory independently of the live follower.
 
 Client `SessionEventStream` extends `RemoteJournalStream` and supplies only `session.follow`, `session.page`, the Session sequence algorithm, and repair requests. The general layer validates and publishes the opening snapshot directly. It calls `session.page({ throughSeq })` only for older history or when a later event reveals a sequence gap.
 

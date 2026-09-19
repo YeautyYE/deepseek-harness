@@ -1228,6 +1228,8 @@ describe('session-query exact reads', () => {
       { persistedReadConcurrency: Number.MAX_SAFE_INTEGER + 1 },
       { preparedSessionCacheSize: 0 },
       { preparedSessionCacheSize: Number.MAX_SAFE_INTEGER + 1 },
+      { preparedSessionCacheMaxBytes: -1 },
+      { preparedSessionCacheMaxBytes: Number.MAX_SAFE_INTEGER + 1 },
     ]) {
       const invalid = new Context()
       await invalid.plugin(SessionStore)
@@ -1244,6 +1246,25 @@ describe('session-query exact reads', () => {
 
     expect(observed.source).toBe('live')
     expect(observed.header.id).toBe(live.id)
+  })
+
+  it('applies a zero decoded-byte budget to inherited observation reads', async () => {
+    const ctx = await liveContext({ preparedSessionCacheMaxBytes: 0 })
+    const meta = header('uncached-observation')
+    const events = eventLog('not retained')
+    TestPersistence.reset([{ meta, events }])
+    await ctx.plugin(TestPersistence)
+    try {
+      {
+        using observed = await ctx.sessionQuery.observeSession(meta.id)
+        expect(observed.events).toEqual(events)
+      }
+      using reread = await ctx.sessionQuery.observeSession(meta.id)
+      expect(reread.events).toEqual(events)
+      expect(TestPersistence.readCalls).toEqual([meta.id, meta.id])
+    } finally {
+      await ctx.fiber.dispose()
+    }
   })
 
   it('leaves the optional persistence dependency optional', async () => {

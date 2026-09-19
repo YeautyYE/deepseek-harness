@@ -11,6 +11,9 @@ export const SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY = 4
 /** Default maximum number of cold prepared-Session observations retained for reuse. */
 export const SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE = 5
 
+/** Default decoded-log weight budget for retained cold observations (32 MiB). */
+export const SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_MAX_BYTES = 32 * 1024 * 1024
+
 /** Backend-independent configuration inherited by every session-query implementation. */
 export interface Config {
   /** Maximum accepted raw read context on either side. Defaults to 50. */
@@ -19,10 +22,16 @@ export interface Config {
   persistedReadConcurrency?: number
   /**
    * Maximum cold prepared-Session observations retained for reuse, keyed by
-   * durable revision. Entries pinned by active observation leases do not count
-   * against this bound until released. Defaults to 5.
+   * durable revision. Active leases count toward this bound but remain protected
+   * from eviction until released, so they may temporarily exceed it. Defaults to 5.
    */
   preparedSessionCacheSize?: number
+  /**
+   * Maximum estimated decoded-log bytes retained across cold observations.
+   * Active leases may exceed the budget until disposal. Zero disables retention
+   * after the final lease. Defaults to 33554432 (32 MiB); not a process heap limit.
+   */
+  preparedSessionCacheMaxBytes?: number
 }
 
 /** Stable machine-routable failure taxonomy for session reads, traces, and search. */

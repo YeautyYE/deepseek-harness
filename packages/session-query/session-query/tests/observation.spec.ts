@@ -136,6 +136,30 @@ async function readerContext(): Promise<Context> {
 }
 
 describe('SessionObservationReader live path', () => {
+  it('drops a cold cached copy when its Session is observed live', async () => {
+    const ctx = await readerContext()
+    const meta = header('cold-to-live')
+    const events = [messageEvent(0, 'persisted')]
+    const counters = { stat: 0, open: 0, read: 0 }
+    ctx.provide('sessionPersistence', stubPersistence(new Map([
+      [meta.id, { header: meta, events, revision: 'r1' }],
+    ]), counters))
+    const reader = new SessionObservationReader(ctx)
+    const cold = await reader.read(meta.id, { projectionMode: 'none' })
+    const detach = ctx.sessions.enter(ctx.sessions.prepare(meta.id, { seed: events, meta }))
+    {
+      using live = await reader.read(meta.id, { projectionMode: 'none' })
+      expect(live.source).toBe('live')
+      expect(cold.events).toEqual(events)
+    }
+    detach()
+    cold[Symbol.dispose]()
+    using reopened = await reader.read(meta.id, { projectionMode: 'none' })
+    expect(reopened.events).toEqual(events)
+    expect(counters.read).toBe(2)
+    await ctx.fiber.dispose()
+  })
+
   it('creates independent live leases and rejects retention after disposal', async () => {
     const ctx = await readerContext()
     const session = ctx.sessions.create(SessionId('live-leases'), { meta: { cwd: '/workspace' } })
@@ -737,6 +761,141 @@ describe('SessionObservationReader cold path', () => {
   })
 })
 
+describe('SessionObservationReader byte budget', () => {
+  it('reclaims replaced and live-entry weights while keeping old leases readable', async () => {
+    const ctx = await readerContext()
+    const a = header('weighted-a')
+    const b = header('weighted-b')
+    const oldEvents = [messageEvent(0, 'a'.repeat(2048))]
+    const storedA = { header: a, events: oldEvents, revision: 'r1' }
+    const counters = { stat: 0, open: 0, read: 0 }
+    ctx.provide('sessionPersistence', stubPersistence(new Map([
+      [a.id, storedA],
+      [b.id, { header: b, events: [messageEvent(0, 'b'.repeat(2048))], revision: 'r1' }],
+    ]), counters))
+    const reader = new SessionObservationReader(ctx, 5, 14_000)
+    const old = await reader.read(a.id, { projectionMode: 'none' })
+    const readOnce = async (id: SessionIdType): Promise<void> => {
+      using observed = await reader.read(id, { projectionMode: 'none' })
+      expect(observed.events[0]?.type).toBe('user/message')
+    }
+    storedA.events = [messageEvent(0, 'c'.repeat(2048))]
+    storedA.revision = 'r2'
+    await readOnce(a.id)
+    await readOnce(b.id)
+    await readOnce(a.id)
+    expect(counters.read).toBe(3)
+    expect(old.events).toEqual(oldEvents)
+    old[Symbol.dispose]()
+    const detach = ctx.sessions.enter(ctx.sessions.prepare(a.id, { seed: storedA.events, meta: a }))
+    await readOnce(a.id)
+    detach()
+    await readOnce(a.id)
+    await readOnce(b.id)
+    expect(counters.read).toBe(4)
+    await ctx.fiber.dispose()
+  })
+
+  it('charges shared decoded content once when the persistence result reuses an object', async () => {
+    const ctx = await readerContext()
+    const meta = header('shared-content')
+    const content = { type: 'text' as const, text: 'x'.repeat(4096) }
+    const event: SessionEvent = {
+      type: 'user/message', seq: SessionSeq(0), time: 1, surfaceOp: 'append',
+      data: createUserMessage({ content: [content, content], source: { kind: 'user' } }),
+    }
+    const counters = { stat: 0, open: 0, read: 0 }
+    ctx.provide('sessionPersistence', stubPersistence(new Map([
+      [meta.id, { header: meta, events: [event], revision: 'r1' }],
+    ]), counters))
+    const reader = new SessionObservationReader(ctx, 5, 12_000)
+    {
+      using observed = await reader.read(meta.id, { projectionMode: 'none' })
+      expect(observed.events[0]).toEqual(event)
+    }
+    using reused = await reader.read(meta.id, { projectionMode: 'none' })
+    expect(reused.events[0]).toEqual(event)
+    expect(counters.read).toBe(1)
+    await ctx.fiber.dispose()
+  })
+
+  it('reuses small logs and releases oversized logs after their final lease', async () => {
+    const ctx = await readerContext()
+    const small = header('small-log')
+    const large = header('large-log')
+    const counters = { stat: 0, open: 0, read: 0 }
+    ctx.provide('sessionPersistence', stubPersistence(new Map([
+      [small.id, { header: small, events: [messageEvent(0, 'small')], revision: 'r1' }],
+      [large.id, { header: large, events: [messageEvent(0, '大'.repeat(8192))], revision: 'r1' }],
+    ]), counters))
+    const reader = new SessionObservationReader(ctx, 5, 8192)
+    const readOnce = async (id: SessionIdType): Promise<void> => {
+      using observed = await reader.read(id, { projectionMode: 'none' })
+      expect(observed.events).toHaveLength(1)
+    }
+    await readOnce(small.id)
+    await readOnce(small.id)
+    expect(counters.read).toBe(1)
+    const observed = await reader.read(large.id, { projectionMode: 'none' })
+    const retained = observed.retain()
+    observed[Symbol.dispose]()
+    await readOnce(large.id)
+    expect(counters.read).toBe(2)
+    expect(retained.events[0]?.data).toMatchObject({ content: [{ type: 'text', text: '大'.repeat(8192) }] })
+    retained[Symbol.dispose]()
+    retained[Symbol.dispose]()
+    await readOnce(large.id)
+    expect(counters.read).toBe(3)
+    await ctx.fiber.dispose()
+  })
+
+  it('evicts least-recently-used logs when their combined weight exceeds the byte budget', async () => {
+    const ctx = await readerContext()
+    const headers = ['byte-a', 'byte-b', 'byte-c'].map(header)
+    const counters = { stat: 0, open: 0, read: 0 }
+    ctx.provide('sessionPersistence', stubPersistence(new Map(headers.map(meta => [meta.id, {
+      header: meta, events: [messageEvent(0, 'x'.repeat(2048))], revision: 'r1',
+    }])), counters))
+    const reader = new SessionObservationReader(ctx, 5, 14_000)
+    const readOnce = async (index: number): Promise<void> => {
+      using observed = await reader.read(headers[index]!.id, { projectionMode: 'none' })
+      expect(observed.events).toHaveLength(1)
+    }
+    await readOnce(0)
+    await readOnce(1)
+    await readOnce(0)
+    expect(counters.read).toBe(2)
+    await readOnce(2)
+    await readOnce(0)
+    expect(counters.read).toBe(3)
+    await readOnce(1)
+    expect(counters.read).toBe(4)
+    await ctx.fiber.dispose()
+  })
+
+  it('disables released-entry retention with a zero byte budget without invalidating leases', async () => {
+    const ctx = await readerContext()
+    const meta = header('uncached')
+    const events = [messageEvent(0, 'readable')]
+    const counters = { stat: 0, open: 0, read: 0 }
+    ctx.provide('sessionPersistence', stubPersistence(new Map([
+      [meta.id, { header: meta, events, revision: 'r1' }],
+    ]), counters))
+    const reader = new SessionObservationReader(ctx, 5, 0)
+    const observed = await reader.read(meta.id, { projectionMode: 'none' })
+    {
+      using shared = await reader.read(meta.id, { projectionMode: 'none' })
+      expect(shared.events).toBe(observed.events)
+    }
+    expect(counters.read).toBe(1)
+    observed[Symbol.dispose]()
+    using reread = await reader.read(meta.id, { projectionMode: 'none' })
+    expect(reread.events).toEqual(events)
+    expect(counters.read).toBe(2)
+    await ctx.fiber.dispose()
+  })
+})
+
 describe('SessionObservationReader cold projections', () => {
   it('hydrates prepared projections through the registry when no projection cache is mounted', async () => {
     const ctx = await readerContext()
@@ -774,15 +933,20 @@ describe('SessionObservationReader cold projections', () => {
     await ctx.plugin(SessionProjectionRegistry)
     const meta = header('cold-projection-failure')
     const store = new Map([[meta.id, { header: meta, events: [messageEvent(0, 'broken')], revision: 'r1' }]])
-    ctx.provide('sessionPersistence', stubPersistence(store, { stat: 0, open: 0, read: 0 }))
+    const counters = { stat: 0, open: 0, read: 0 }
+    ctx.provide('sessionPersistence', stubPersistence(store, counters))
     vi.spyOn(ctx.sessionProjections, 'hydrate').mockImplementation(() => {
       throw new Error('hydration failed')
     })
 
-    await expect(new SessionObservationReader(ctx).read(meta.id)).rejects.toMatchObject({
+    const reader = new SessionObservationReader(ctx, 5, 0)
+    await expect(reader.read(meta.id)).rejects.toMatchObject({
       code: 'SESSION_QUERY_CORRUPT_SESSION',
       message: expect.stringContaining('failed to project') as string,
     })
+    using recovered = await reader.read(meta.id, { projectionMode: 'none' })
+    expect(recovered.events).toHaveLength(1)
+    expect(counters.read).toBe(2)
     await ctx.fiber.dispose()
   })
 })

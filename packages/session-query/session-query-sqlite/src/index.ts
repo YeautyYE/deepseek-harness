@@ -17,6 +17,7 @@ import type {
 } from '@deepseek-ai/dsh-session-persistence'
 import SessionQueryEngine, {
   SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY,
+  SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_MAX_BYTES,
   SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE,
   SESSION_QUERY_READ_WINDOW_MAX,
   SessionQueryError,
@@ -116,6 +117,8 @@ export interface Config extends SessionQueryConfig {
   persistedReadConcurrency?: number
   /** Maximum cold prepared-Session observations the inherited reader retains for reuse. Defaults to 5. */
   preparedSessionCacheSize?: number
+  /** Estimated decoded-log byte budget for inherited cold observations; zero disables released-entry retention. Defaults to 33554432. */
+  preparedSessionCacheMaxBytes?: number
 }
 
 interface ResolvedConfig {
@@ -128,6 +131,7 @@ interface ResolvedConfig {
   readWindowMax: number
   persistedReadConcurrency: number
   preparedSessionCacheSize: number
+  preparedSessionCacheMaxBytes: number
 }
 
 interface ObservedSession {
@@ -221,6 +225,11 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
       .min(1)
       .max(Number.MAX_SAFE_INTEGER)
       .default(SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE),
+    preparedSessionCacheMaxBytes: z.number()
+      .step(1)
+      .min(0)
+      .max(Number.MAX_SAFE_INTEGER)
+      .default(SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_MAX_BYTES),
   })
 
   /** Validated and defaulted backend configuration. */
@@ -1030,6 +1039,8 @@ function resolveConfig(config: Config): ResolvedConfig {
       ?? SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY,
     preparedSessionCacheSize: config.preparedSessionCacheSize
       ?? SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE,
+    preparedSessionCacheMaxBytes: config.preparedSessionCacheMaxBytes
+      ?? SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_MAX_BYTES,
   }
   if (typeof resolved.path !== 'string' || resolved.path.trim().length === 0) {
     throw invalidConfig('path must not be blank')
@@ -1053,6 +1064,12 @@ function resolveConfig(config: Config): ResolvedConfig {
     || resolved.preparedSessionCacheSize < 1
   ) {
     throw invalidConfig('preparedSessionCacheSize must be a positive safe integer')
+  }
+  if (
+    !Number.isSafeInteger(resolved.preparedSessionCacheMaxBytes)
+    || resolved.preparedSessionCacheMaxBytes < 0
+  ) {
+    throw invalidConfig('preparedSessionCacheMaxBytes must be a non-negative safe integer')
   }
   if (resolved.defaultLimit > resolved.maxLimit) {
     throw invalidConfig('defaultLimit must be less than or equal to maxLimit')

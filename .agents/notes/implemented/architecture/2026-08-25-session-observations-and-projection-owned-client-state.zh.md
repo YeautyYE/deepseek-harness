@@ -45,7 +45,7 @@ flowchart LR
 
 ### Observation 是 point read 单元
 
-`SessionQueryEngine.observeSession(sessionId, options)` 返回可 dispose（资源释放）的 `SessionObservation`，其中包含同一份 source kind、header、连续事件前缀、cursor、可选 projection snapshot，以及 prepared source 的持久化 revision。已挂载 Session 优先；否则由读取方自己的 prepared cache——以 `stat().revision` 为键、由 observation lease 固定——提供冷 Session，让并发 observation 共享同一次持久化读取（`open(id, 'read')` + `read`），包括尚未完成的冷加载。
+`SessionQueryEngine.observeSession(sessionId, options)` 返回可 dispose（资源释放）的 `SessionObservation`，其中包含同一份 source kind、header、连续事件前缀、cursor、可选 projection snapshot，以及 prepared source 的持久化 revision。已挂载 Session 优先；否则读取方自己的 prepared cache 以持久化实例和 `stat().revision` 为键，由 observation lease 固定，复用已完成的冷读取（`open(id, 'read')` + `read`）。[历史保留决策](../bug-fix/2026-09-19-history-reader-retention.zh.md) 定义缓存限制和首屏读取方生命周期。
 
 每个 owner 都会 dispose 自己的 observation。`retain()` 为同一切面创建另一份 lease，使 `session.follow` 能够先发布 snapshot，再把完全相同的 prepared source 转交给后台 Agent promotion，而无需重读日志。冷解析期间出现的 live Session 会在发布前胜出；已经消失的 live source 会按 cold source 重试。
 

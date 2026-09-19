@@ -175,40 +175,12 @@ export class SessionHistoryController {
     const onAbort = (): void => { notify() }
     signal.addEventListener('abort', onAbort, { once: true })
     try {
-      using source = await this.sourceFor(address, signal, true)
-      const events = source.events
-      signal.throwIfAborted()
-      const cursor = source.cursor
-      snapshotCursor = cursor
-      const page = paginate(events, undefined, request.maxMessages ?? DEFAULT_MAX_MESSAGES)
-      const assistantStream = request.assistantStream === true
-        ? this.assistantStreams.get(target)?.snapshot() ?? { revision: 0 }
-        : undefined
-      // The accumulator snapshot and this watermark are synchronous. Frames
-      // through the cut are represented or superseded by that baseline,
-      // including larger revisions from a retired Agent; later revision
-      // resets reach Client continuity validation.
-      const assistantStreamOrdinalCut = assistantStreamOrdinal
-      yield {
-        type: 'snapshot',
-        header: wireHeader(source.header),
-        cursor,
-        records: pageRecords(page.events),
-        hasMore: page.hasMore,
-        projections: source.projections === undefined
-          ? { asOfSeq: cursor, values: {} }
-          : projectionBlock(source.projections),
-        ...assistantStream === undefined ? {} : { assistantStream },
-      }
-      if (address.kind === 'session' && source.source === 'prepared') {
-        const promotion = source.retain()
-        try {
-          this.promote(promotion)
-        } catch (error: unknown) {
-          promotion[Symbol.dispose]()
-          throw error
-        }
-      }
+      const { cursor, assistantStreamOrdinalCut } = yield* this.opening(
+        request,
+        signal,
+        (cursor) => { snapshotCursor = cursor },
+        () => assistantStreamOrdinal,
+      )
       let nextOffset = SessionLogOffset(cursor + 1)
       while (!follower.closed && !signal.aborted) {
         const item = buffered.popFront()
@@ -237,6 +209,50 @@ export class SessionHistoryController {
       disposeEvent()
       disposeAssistantStream?.()
     }
+  }
+
+  /** Complete the opening read outside the live follower's generator frame so its log can be collected. */
+  private async *opening(
+    request: SessionFollowRequest,
+    signal: AbortSignal,
+    observeCursor: (cursor: SessionSeqCursor) => void,
+    arrivalOrdinal: () => number,
+  ): AsyncGenerator<SessionFollowFrame, { cursor: SessionSeqCursor; assistantStreamOrdinalCut: number }> {
+    using source = await this.sourceFor(request.address, signal, true)
+    const events = source.events
+    signal.throwIfAborted()
+    const cursor = source.cursor
+    observeCursor(cursor)
+    const page = paginate(events, undefined, request.maxMessages ?? DEFAULT_MAX_MESSAGES)
+    const assistantStream = request.assistantStream === true
+      ? this.assistantStreams.get(addressId(request.address))?.snapshot() ?? { revision: 0 }
+      : undefined
+    // The accumulator snapshot and this watermark are synchronous. Frames
+    // through the cut are represented or superseded by that baseline,
+    // including larger revisions from a retired Agent; later revision
+    // resets reach Client continuity validation.
+    const assistantStreamOrdinalCut = arrivalOrdinal()
+    yield {
+      type: 'snapshot',
+      header: wireHeader(source.header),
+      cursor,
+      records: pageRecords(page.events),
+      hasMore: page.hasMore,
+      projections: source.projections === undefined
+        ? { asOfSeq: cursor, values: {} }
+        : projectionBlock(source.projections),
+      ...assistantStream === undefined ? {} : { assistantStream },
+    }
+    if (request.address.kind === 'session' && source.source === 'prepared') {
+      const promotion = source.retain()
+      try {
+        this.promote(promotion)
+      } catch (error: unknown) {
+        promotion[Symbol.dispose]()
+        throw error
+      }
+    }
+    return { cursor, assistantStreamOrdinalCut }
   }
 
   private async sourceFor(
