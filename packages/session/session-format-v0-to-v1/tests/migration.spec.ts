@@ -30,6 +30,20 @@ function createMigrationStage(id: string) {
 }
 
 describe('released Session format v0 to v1', () => {
+  it.each(['instructions', 'recall'] as const)('preserves the released plugin %s summary', (form) => {
+    const transform = createMigrationStage('plugin-summary')
+    const event = {
+      type: 'user/message', seq: 0, time: 1,
+      data: {
+        id: 'legacy-user', role: 'user', content: [{ type: 'text', text: 'context' }],
+        source: { kind: 'plugin', plugin: 'context', form, summary: 'legacy hint' },
+      },
+    } as SessionFormatEvent
+
+    const migrated = transform.transform(event)[0]
+    expect(migrated).toEqual(event)
+  })
+
   it('changes only the version of a canonical decoded artifact', () => {
     const header = {
       type: 'session',

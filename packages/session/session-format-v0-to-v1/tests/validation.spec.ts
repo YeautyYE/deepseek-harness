@@ -289,6 +289,15 @@ describe('released event and payload inventory', () => {
     expect(mutations).toBeGreaterThan(250)
   })
 
+  it.each(['instructions', 'recall'])('validates the optional released plugin %s summary', (form) => {
+    const source = { kind: 'plugin', plugin: 'fixture-context', form, summary: 'context summary' }
+    expect(() => { assertPayload('user/message', { ...userMessage, source }) }).not.toThrow()
+    for (const summary of [null, 1, false, [], {}]) {
+      expect(() => { assertPayload('user/message', { ...userMessage, source: { ...source, summary } }) })
+        .toThrow(/summary/)
+    }
+  })
+
   it('allows explicit opaque tool metadata and PTC arguments losslessly', () => {
     for (const type of ['tool/result', 'tool/code-dispatch', 'tool/code-dispatch-start']) {
       const data = structuredClone(validPayloads[type] as SessionFormatJsonValue)

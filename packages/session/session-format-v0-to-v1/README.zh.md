@@ -42,7 +42,7 @@ const targetInheritedEventCount = stage.finish(migrationContext)
 
 `releasedV0SessionFormatCodec` 读取精确的 v0 header 与物理行，包括打包的 Assistant 增量和范围编码的来源序号。它的 decoder 通过 `emitEvent()` 与 `emitRun()` 发出单个事件或 codec 自有的紧凑 run。`sessionFormatV0ToV1` 为每次还原创建一个有状态 Stage；静态 catalog 连接该 decoder 与 Stage，使迁移无需保留物理行数组。`releasedV1SessionFormatCodec` 为 v1 物理布局暴露相同的逐行 decoder，同时不冻结普通事件词表。
 
-Alpha 迁移边会拒绝冻结清单之外的所有事件类型，包括带有 `ignorable: true` 标记的未知事件。它也会拒绝意外的 payload 成员。`tool/result.meta` 与嵌套 PTC `arguments` 是显式的不透明 JSON 字段；迁移会原样保留它们，不把其中的数字解释为会话序号。内容块中未知的 `type` 分支、消息来源中未知的 `kind` 分支、assistant 结束原因中未知的 `kind` 分支与 `turn/end` 原因中未知的 `kind` 分支保持 owner-opaque JSON，已知分支则接受结构校验。
+Alpha 迁移边会拒绝冻结清单之外的所有事件类型，包括带有 `ignorable: true` 标记的未知事件。它也会拒绝意外的 payload 成员。`tool/result.meta` 与嵌套 PTC `arguments` 是显式的不透明 JSON 字段；迁移会原样保留它们，不把其中的数字解释为会话序号。内容块中未知的 `type` 分支、消息来源中未知的 `kind` 分支、assistant 结束原因中未知的 `kind` 分支与 `turn/end` 原因中未知的 `kind` 分支保持 owner-opaque JSON，已知分支则接受结构校验。已发布的插件 source 可在 `instructions` 或 `recall` 形式旁保留字符串 `summary`；这些历史展示提示原样保留，`notice` 仍要求 summary，无效的 summary 值会在校验时失败。
 
 有限的历史规范化会把 `steering/message` 转换为 `user/message`、把 `compact/*` 事件重命名为 `compaction/*`、移除 `turn/start.trigger`、转换已停用的 `turn/end` reason、添加当前消息包装层，并为旧消息、retry chain 与压缩（compaction）组补充确定性 id，同时移除已停用且重复的 `request/header.header.messagePrefix`。已停用的 `request/header-delta`、`mode/set` 和 `request/header` fallback reason 会使迁移失败。除此之外，任何事件、引用、来源或 payload 事实都不得改变。
 

@@ -650,8 +650,12 @@ function pluginSourceValue(source: JsonRecord, label: string): void {
   } else if (source['sections'] !== undefined) {
     throw new SessionFormatError(`${label} sections require snapshot form`)
   }
-  if (form === 'notice') stringValue(source['summary'], `${label} summary`)
-  else if (source['summary'] !== undefined) throw new SessionFormatError(`${label} summary requires notice form`)
+  if (form === 'notice'
+    || ((form === 'instructions' || form === 'recall') && source['summary'] !== undefined)) {
+    stringValue(source['summary'], `${label} summary`)
+  } else if (source['summary'] !== undefined) {
+    throw new SessionFormatError(`${label} summary requires notice, instructions, or recall form`)
+  }
 }
 
 function sessionReferenceSourceValue(source: JsonRecord, label: string, version: number): void {
