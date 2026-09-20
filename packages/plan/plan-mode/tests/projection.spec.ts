@@ -12,6 +12,7 @@ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import { CommandId } from '@deepseek-ai/dsh-commands/brand'
 import PlanModeController from '@deepseek-ai/dsh-plan-mode'
+import * as PlanProjection from '../src/projection.ts'
 
 interface Bench {
   ctx: Context
@@ -62,6 +63,42 @@ function commitPlanMode(session: Session, active: boolean, turn: number): void {
 }
 
 describe('plan projection unit', () => {
+  it('projects a detached history without commands, prompts, tools, or an Agent', async () => {
+    const ctx = new Context()
+    try {
+      await ctx.plugin(SessionStore)
+      await ctx.plugin(SessionProjectionRegistry)
+      const fiber = await ctx.plugin(PlanProjection)
+      const session = ctx.sessions.prepare()
+      commitPlanMode(session, true, 1)
+      expect(ctx.sessionProjections.snapshot(session).values.plan).toEqual({ active: true, pending: false })
+      expect(ctx.sessions.list()).toEqual([])
+      expect(ctx.get('planMode')).toBeUndefined()
+      expect(ctx.get('tools')).toBeUndefined()
+      expect(ctx.get('systemPrompt')).toBeUndefined()
+      expect(ctx.get('commands')).toBeUndefined()
+      await fiber.dispose()
+      expect(ctx.sessionProjections.snapshot(session).values).not.toHaveProperty('plan')
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('keeps the Host projection when a preset plan runtime unloads', async () => {
+    const bench = await harness(false)
+    try {
+      const projection = await bench.ctx.plugin(PlanProjection)
+      const runtime = await bench.ctx.plugin(PlanModeController, { section: 'plan policy' })
+      commitPlanMode(bench.session, true, 1)
+      await runtime.dispose()
+      expect(bench.values().plan).toEqual({ active: true, pending: false })
+      await projection.dispose()
+      expect(bench.values()).not.toHaveProperty('plan')
+    } finally {
+      await bench.ctx.fiber.dispose()
+    }
+  })
+
   it('serves inactive/not-pending for the empty log', async () => {
     const bench = await harness(true)
     expect(bench.values().plan).toEqual({ active: false, pending: false })

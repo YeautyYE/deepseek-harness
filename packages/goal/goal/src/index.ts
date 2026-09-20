@@ -12,7 +12,7 @@ import type { ZodType } from 'zod'
 import { agentEvents } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
-import type { Session, SessionEvent, SessionLogOffset } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
@@ -273,10 +273,20 @@ export class GoalService extends TypertRemoteService {
    * @returns a fresh view or `undefined` when no goal is current.
    * @throws {@link GoalError} when the agent is not the registry's live instance.
    */
-  @Remote('get')
   get(agent: Agent): GoalView | undefined {
     this.assertLive(agent)
     return this.view(this.state(agent.session), this.runtimeState(agent.session))
+  }
+
+  /**
+   * Read process-local goal activation without resuming a cold Session.
+   * @param sessionId - Session identity whose live Agent may own a current goal.
+   * @returns the live goal view, or `undefined` when no live Agent or current goal exists.
+   */
+  @Remote('get')
+  remoteExportGet(sessionId: SessionId): GoalView | undefined {
+    const agent = this.ctx.agents.get(sessionId)
+    return agent === undefined ? undefined : this.get(agent)
   }
 
   /**

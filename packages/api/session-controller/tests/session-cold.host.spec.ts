@@ -504,10 +504,7 @@ describe('subagent ownership fence', () => {
     const remote = createSessionTestRemote(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })
     ctx.sessionProjections.register(subagentIdentityProjectionDefinition)
 
-    const history = await new SessionHistoryController(
-      ctx,
-      (observation) => { observation[Symbol.dispose]() },
-    ).page({
+    const history = await new SessionHistoryController(ctx).page({
       address: {
         kind: 'subagent',
         parentSessionId: meta.parentSession as SessionId,

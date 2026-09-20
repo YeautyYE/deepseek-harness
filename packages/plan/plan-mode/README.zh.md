@@ -94,14 +94,15 @@ agent 完成计划后，会以 markdown 形式、从标题开头书写计划并�
 
 ### 会话投影单元
 
-组合了 `ctx.sessionProjections` 时，本包通过可选注入注册 `plan` 单元。该单元把已记录的 `/plan` 命令运行转为候选目标，在 `plan/mode` 上提交已记录状态，并为 `view` 推导 `{ active, pending }`，其中 `pending` 仅在未结算或已成功的选择与已记录状态不同时为 true——这是仅凭日志即可恢复的纯回放量。key 由 [`src/types.ts`](src/types.ts) 的声明合并加入 `SessionProjectionMap`；框架负责驱动该单元，卸载插件 fiber 会注销该 key。plan-mode 读取要求该单元与 `turnBoundary` 单元存在；注册表或任一 key 缺失时都会显式失败。
+运行时要求 `ctx.sessionProjections` 并注册共享的 `plan` 单元。它将已记录的 `/plan` 命令与 `plan/mode` 事件折叠为 `{ active, pending }`；仅当未结算或已成功的选择与已记录模式不同时，`pending` 才为 true。`@deepseek-ai/dsh-plan-mode/projection` 插件仅依赖注册表，提供相同的冷历史状态，不挂载命令、提示词段落、工具或 Agent。Web 在 Host 挂载此入口，预设拥有运行时。最后一个注册拥有者卸载时才移除该键。运行时读取还要求 `turnBoundary`；任一单元缺失时均显式失败。
 
 ### 源码地图
 
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 插件入口：`Config` schema、`ctx.planMode` 服务、`plan:policy` 段落、`/plan` 命令、`exit_plan_mode` 工具 |
-| [`src/types.ts`](src/types.ts) | `plan` 投影 key 声明与 `PlanProjection` 协议值 |
+| [`src/projection.ts`](src/projection.ts) | 共享 `plan` 折叠与仅提供投影的 Host 插件 |
+| [`src/types.ts`](src/types.ts) | `plan/mode`、`plan` 投影 key 声明与 `PlanProjection` 协议值 |
 | [`src/client.ts`](src/client.ts) | types 出口的客户端命名空间再导出 |
 | [`src/invariant.ts`](src/invariant.ts) | 不变式伴生插件：校验 `plan/mode` 载荷结构 |
 

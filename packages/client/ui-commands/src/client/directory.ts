@@ -1,10 +1,4 @@
-/**
- * Command-directory cache keyed by session: one entry per served catalog —
- * every session is agent-backed, so `command.list({sessionId})` is the only
- * request fields. Each entry keeps the single-flight / soft-hard invalidation
- * / epoch-guard behavior of the original global cache; the session-key axis
- * is the only extra dimension.
- */
+/** Session-keyed command catalogs with single-flight reads and revision-ordered invalidation. */
 import type { CommandDescriptor } from '@deepseek-ai/dsh-commands/types'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { resolveCommand } from './resolution.ts'
@@ -18,7 +12,7 @@ export type { CommandDescriptor } from '@deepseek-ai/dsh-commands/types'
  */
 export type DirectoryStatus = 'cold' | 'pending' | 'ready' | 'failed'
 
-/** Injected pull (the service binds command.list off the root connection). */
+/** Injected pull (the service binds session.commandCatalog off the root connection). */
 export type FetchCommands = (sessionId: SessionId) => Promise<readonly CommandDescriptor[]>
 
 /** One session key's cache cell. */

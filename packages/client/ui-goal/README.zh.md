@@ -43,7 +43,7 @@ Web GUI 的 goal 界面同时显示持久 goal 状态及当前的进程本地激
 <details>
 <summary>实现细节——点击展开</summary>
 
-持久 goal 经 `useProjection('goal')` 到达（由历史尾页播种、`session/projection` 帧更新）。注入面携带注册方私有的激活钩子源与四个变更动词。该源仅在框架钩子观察它时启动；启动后会读取 `ctx.remote.goals.get`、订阅 `goal/activation-changed`，并在 running 状态或连接重置时刷新。实时事件 epoch 会让在途读取失效，因此较旧的 HTTP 响应不能覆盖较新的 activation 变化；running 刷新会保留最后一次已知 activation，直到读取完成。条带不持有领域存储或跨插件缓存。每个变更在调用时从会话当前投影值读取 CAS ref，比较并交换（RPC 的 CAS）就是陈旧性护栏。由于 React 的 pending 渲染无法拦住同一帧内的点击，条带会同步为变更建立 single-flight 防护。指令输入投影是独立的 Conversation Definition，在通用命令结果 Node 之前构建 `command-input` Chat Node；它绝不创建 `user/message` 或模型轮次。
+持久 goal 经 `useProjection('goal')` 到达（由历史尾页播种、`session/projection` 帧更新）。注入面携带注册方私有的激活钩子源与四个变更动词。该源仅在框架钩子观察它时启动；启动后会在不激活冷 Session 的情况下读取 `ctx.remote.goals.get`、订阅 `goal/activation-changed`，并在 running 状态或连接重置时刷新。实时事件 epoch 会让在途读取失效，因此较旧的 HTTP 响应不能覆盖较新的 activation 变化；running 刷新会保留最后一次已知 activation，直到读取完成。条带不持有领域存储或跨插件缓存。每个变更在调用时从会话当前投影值读取 CAS ref，比较并交换（RPC 的 CAS）就是陈旧性护栏。由于 React 的 pending 渲染无法拦住同一帧内的点击，条带会同步为变更建立 single-flight 防护。指令输入投影是独立的 Conversation Definition，在通用命令结果 Node 之前构建 `command-input` Chat Node；它绝不创建 `user/message` 或模型轮次。
 
 </details>
 

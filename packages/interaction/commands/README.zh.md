@@ -59,7 +59,7 @@ ctx.commands.register({
 
 ### 从适配器分派
 
-交互式适配器调用 `execute(agent, line, attachments, signal)`，传入确切的接收 agent、完整命令行与本次提交的有序附件。它返回已结算的 `CommandExecution`——规范化结果加生命周期配对 `commandId`——语法无效或名称未知时返回 `undefined`。`list(agent)` 与 `find(agent, name)` 在应用 agent 作用域遮蔽后用于命令发现。
+交互式适配器调用 `execute(agent, line, attachments, signal)`，传入确切的接收 agent、完整命令行与本次提交的有序附件。它返回已结算的 `CommandExecution`——规范化结果加生命周期配对 `commandId`——语法无效或名称未知时返回 `undefined`。`list(scope)` 接受存活 Agent、预设常驻作用域或用于全局发现的 `undefined`；`find(agent, name)` 解析一份可执行定义。Session Controller 根据该作用域提供浏览器目录读取，不激活冷 Agent；命令执行仍要求存活 Agent。
 
 ### 取消
 

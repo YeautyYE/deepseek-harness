@@ -35,7 +35,7 @@ ctx.provide('sessionQuery', {
     return lease()
   },
 } as never)
-const history = new SessionHistoryController(ctx, (observation) => { observation[Symbol.dispose]() })
+const history = new SessionHistoryController(ctx)
 async function collect(): Promise<void> {
   assert(globalThis.gc, 'run the built diagnostic with node --expose-gc')
   for (let i = 0; i < 4; i++) {

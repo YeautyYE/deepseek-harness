@@ -7,10 +7,9 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { z as zod } from 'zod'
-import type { ZodType } from 'zod'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { TodoItem } from './types.ts'
+import { todosProjectionDefinition } from './projection.ts'
 // Type-only: resolves the required ctx.sessionProjections service declaration.
 import type {} from '@deepseek-ai/dsh-session-projection'
 // The `todos` projection-key declaration lives in src/types.ts (its one home);
@@ -110,15 +109,6 @@ function toTodoList(raw: { content: string; status: string }[], allowParallel: b
   return todos
 }
 
-/** Wire payload schema of the `todos` projection (whole list or pre-first-write null). */
-const todosProjectionSchema: ZodType<TodoItem[] | null> = zod.union([
-  zod.array(zod.object({
-    content: zod.string(),
-    status: zod.union([zod.literal('pending'), zod.literal('in_progress'), zod.literal('completed')]),
-  })),
-  zod.null(),
-])
-
 /**
  * Register the `todo_write` tool on `ctx.tools` and the `todos` unit on
  * `ctx.sessionProjections`.
@@ -127,22 +117,7 @@ const todosProjectionSchema: ZodType<TodoItem[] | null> = zod.union([
  */
 export function apply(ctx: Context, config: Config): void {
   const allowParallel = config.allowParallelInProgress
-  // Standing-plan fold: latest whole todo/write list, cleared by the next
-  // turn/start (turn/end keeps the finished checklist visible); null before the
-  // first write or after a later turn begins; every other event returns the
-  // same state reference.
-  ctx.sessionProjections.register<'todos', TodoItem[] | null>({
-    key: 'todos',
-    stateSchema: todosProjectionSchema,
-    init: () => null,
-    apply: (state, event) => {
-      if (event.type === 'todo/write') return event.data.todos
-      if (event.type === 'turn/start') return null
-      return state
-    },
-    wire: { viewSchema: todosProjectionSchema, view: state => state },
-    stateVersion: 2,
-  })
+  ctx.sessionProjections.register(todosProjectionDefinition)
   ctx.tools.register(defineTool({
     name: 'todo_write',
     description: describe(allowParallel),

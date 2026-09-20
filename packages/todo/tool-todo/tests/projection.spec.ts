@@ -20,6 +20,7 @@ import ToolRuntime from '@deepseek-ai/dsh-tools'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import * as ToolTodo from '@deepseek-ai/dsh-tool-todo'
+import * as TodoProjection from '../src/projection.ts'
 
 interface Bench {
   ctx: Context
@@ -56,6 +57,44 @@ function seedMessage(session: Session): void {
 }
 
 describe('todos projection provider', () => {
+  it('projects a detached history without model tools or a live Agent', async () => {
+    const ctx = new Context()
+    try {
+      await ctx.plugin(SessionStore)
+      await ctx.plugin(SessionProjectionRegistry)
+      const fiber = await ctx.plugin(TodoProjection)
+      const session = ctx.sessions.prepare()
+      const todos: TodoItem[] = [{ content: 'saved task', status: 'completed' }]
+      session.append('todo/write', { todos })
+      expect(ctx.sessionProjections.snapshot(session).values.todos).toEqual(todos)
+      expect(ctx.sessions.list()).toEqual([])
+      expect(ctx.get('tools')).toBeUndefined()
+      expect(ctx.get('agents')).toBeUndefined()
+      await fiber.dispose()
+      expect(ctx.sessionProjections.snapshot(session).values).not.toHaveProperty('todos')
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('keeps the Host projection when a preset tool registration unloads', async () => {
+    const bench = await harness(false)
+    try {
+      const projection = await bench.ctx.plugin(TodoProjection)
+      const tool = await bench.ctx.plugin(ToolTodo, { allowParallelInProgress: true })
+      const todos: TodoItem[] = [{ content: 'saved task', status: 'completed' }]
+      bench.session.append('turn/start', { turn: 1 })
+      bench.session.append('todo/write', { todos })
+      bench.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+      await tool.dispose()
+      expect((await bench.tailProjections())?.values.todos).toEqual(todos)
+      await projection.dispose()
+      expect((await bench.tailProjections())?.values).not.toHaveProperty('todos')
+    } finally {
+      await bench.ctx.fiber.dispose()
+    }
+  })
+
   it('serves null before the first todo/write', async () => {
     const bench = await harness(true)
     seedMessage(bench.session)

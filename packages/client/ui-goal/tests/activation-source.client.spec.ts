@@ -27,6 +27,23 @@ function goalView(activation: 'armed' | 'disarmed'): GoalView {
 }
 
 describe('goal activation source', () => {
+  it('shows a persisted active goal as disarmed when its Agent is cold', async () => {
+    const source = createGoalActivationSource({
+      projection: createSnapshotStore<GoalProjection | null | undefined>(projection()),
+      session: createSnapshotStore({ running: false }),
+      getGoal: () => Promise.resolve({ ok: true, value: undefined }),
+      subscribeActivation: () => () => {},
+      subscribeReset: () => () => {},
+    })
+    const dispose = source.subscribe(() => {})
+    try {
+      await Promise.resolve()
+      expect(source.getSnapshot()).toEqual({ id: GOAL_ID, revision: 1, activation: 'disarmed' })
+    } finally {
+      dispose()
+    }
+  })
+
   it('does not let a stale read overwrite a later activation event', async () => {
     const projectionStore = createSnapshotStore<GoalProjection | null | undefined>(projection())
     const session = createSnapshotStore({ running: false })

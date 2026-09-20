@@ -150,11 +150,11 @@ register(definition: CommandDefinition): () => void
 registerFileReceiptResolver(resolver: CommandFileReceiptResolver): () => void
 
 /**
- * List the effective immutable command descriptors for one agent.
- * @param agent - exact receiving agent and scoped-layer key.
+ * List the effective immutable command descriptors for one scope.
+ * @param scope - live Agent, standing preset scope, or undefined for global commands.
  * @returns name-sorted descriptors after scoped shadowing.
  */
-@Remote list(agent: Agent): readonly CommandDescriptor[]
+list(scope: ScopeKey | undefined): readonly CommandDescriptor[]
 
 /**
  * Resolve one effective command definition.
@@ -195,7 +195,7 @@ find(agent: Agent, name: string): CommandDefinition | undefined
 @Remote async execute( agent: Agent, line: string, submittedAttachments: readonly CommandSubmitAttachment[], signal: AbortSignal, ): Promise<CommandExecution | undefined>
 ```
 
-Types: [Agent](core.zh.md)
+Types: [Agent](core.zh.md) · [ScopeKey](scope.zh.md)
 
 Source: [`packages/interaction/commands/src/index.ts`](../../packages/interaction/commands/src/index.ts)
 

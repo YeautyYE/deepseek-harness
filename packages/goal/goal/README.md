@@ -73,6 +73,8 @@ Every accepted change is recorded durably in the session log — the only store 
 
 ### Observing a goal
 
+The browser reads durable state through the `goal` projection. `goals.get(sessionId)` reads only an existing live Agent and returns `undefined` for a cold Session or an absent current goal; it never resumes an Agent. A persisted active goal without a live Agent is disarmed.
+
 Consumers read the current goal with `ctx.goals.get(agent)` and receive a detached view: objective, phase, rounds started versus the cap, blocker reason when blocked, and whether continuation is armed. Mutations must carry the exact `{ id, revision }` from that view, so a consumer holding older state receives a clear stale-revision error instead of silently overwriting newer state:
 
 ```text

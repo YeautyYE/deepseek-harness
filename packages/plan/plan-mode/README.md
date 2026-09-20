@@ -94,14 +94,15 @@ The command child activates only when a commands service is composed. It maps ba
 
 ### Session projection unit
 
-When `ctx.sessionProjections` is composed, the package registers the `plan` unit through optional injection. The unit turns logged `/plan` command runs into a candidate target, commits the logged state on `plan/mode`, and derives `{ active, pending }` for `view`, where `pending` is true only while an unsettled or successful selection differs from the logged state — a pure replay quantity recoverable from the log alone. The key merges into `SessionProjectionMap` from [`src/types.ts`](src/types.ts); the framework drives the unit, and unloading the plugin fiber unregisters the key. Plan-mode reads require this unit and the `turnBoundary` unit, and fail explicitly if the registry or either key is absent.
+The runtime requires `ctx.sessionProjections` and registers the shared `plan` unit. It folds logged `/plan` commands and `plan/mode` events into `{ active, pending }`; `pending` is true only while an unsettled or successful selection differs from the logged mode. The `@deepseek-ai/dsh-plan-mode/projection` plugin requires only the registry and serves the same cold-history state without commands, prompt sections, tools, or Agents. Web mounts this entry on the Host; presets own the runtime. The last registration owner to unload removes the key. Runtime reads also require `turnBoundary` and fail explicitly when either unit is absent.
 
 ### Source map
 
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Plugin entry: `Config` schema, the `ctx.planMode` service, `plan:policy` section, `/plan` command, `exit_plan_mode` tool |
-| [`src/types.ts`](src/types.ts) | The `plan` projection-key declaration and `PlanProjection` wire value |
+| [`src/projection.ts`](src/projection.ts) | Shared `plan` fold and the projection-only Host plugin |
+| [`src/types.ts`](src/types.ts) | `plan/mode`, the `plan` projection-key declaration, and `PlanProjection` wire value |
 | [`src/client.ts`](src/client.ts) | Client-namespace re-export of the types outlet |
 | [`src/invariant.ts`](src/invariant.ts) | Invariant companion: validates the `plan/mode` payload shape |
 

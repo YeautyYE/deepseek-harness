@@ -674,9 +674,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'disposer that removes this exact resolver.',
       },
       {
-        signature: '@Remote list(agent: Agent): readonly CommandDescriptor[]',
-        description: 'List the effective immutable command descriptors for one agent.',
-        parameters: [{ name: 'agent', description: 'exact receiving agent and scoped-layer key.' }],
+        signature: 'list(scope: ScopeKey | undefined): readonly CommandDescriptor[]',
+        description: 'List the effective immutable command descriptors for one scope.',
+        parameters: [{ name: 'scope', description: 'live Agent, standing preset scope, or undefined for global commands.' }],
         returns: 'name-sorted descriptors after scoped shadowing.',
       },
       {
@@ -1067,11 +1067,17 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Goal service (`ctx.goals`) backed exclusively by the owning session log.',
     methods: [
       {
-        signature: '@Remote(\'get\') get(agent: Agent): GoalView | undefined',
+        signature: 'get(agent: Agent): GoalView | undefined',
         description: 'Read the current goal for one exact live agent.',
         parameters: [{ name: 'agent', description: 'owning live agent.' }],
         returns: 'a fresh view or `undefined` when no goal is current.',
         throws: ['{@link GoalError} when the agent is not the registry\'s live instance.'],
+      },
+      {
+        signature: '@Remote(\'get\') remoteExportGet(sessionId: SessionId): GoalView | undefined',
+        description: 'Read process-local goal activation without resuming a cold Session.',
+        parameters: [{ name: 'sessionId', description: 'Session identity whose live Agent may own a current goal.' }],
+        returns: 'the live goal view, or `undefined` when no live Agent or current goal exists.',
       },
       {
         signature: 'disarm(agent: Agent): GoalView | undefined',
@@ -1669,6 +1675,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Resolve or resume one ordinary Session for another Host API domain.',
         parameters: [{ name: 'sessionId', description: 'Session identity whose Agent owns the operation.' }],
         returns: 'the live Agent or the stable Session-domain failure.',
+      },
+      {
+        signature: '@Remote(\'commandCatalog\') async commandCatalog(sessionId: SessionId, signal: AbortSignal): Promise<readonly CommandDescriptor[]>',
+        description: 'Read a live or stored Session\'s effective command catalog without activating its Agent.',
+        parameters: [{ name: 'sessionId', description: 'Session identity whose recorded preset selects the scoped commands.' }, { name: 'signal', description: 'caller cancellation for the observation and catalog publication.' }],
+        returns: 'immutable name-sorted descriptors after scoped shadowing.',
       },
       {
         signature: 'inspect( sessionId: SessionId, signal?: AbortSignal, ): Promise<SessionInspection>',

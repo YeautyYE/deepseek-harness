@@ -80,7 +80,8 @@ The [todo_write tool Agent Note](../../../.agents/notes/archived/feature/2026-06
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Plugin entry: `Config` schema, tool registration, `todos` projection unit |
+| [`src/index.ts`](src/index.ts) | Plugin entry: `Config` schema and model-facing tool |
+| [`src/projection.ts`](src/projection.ts) | Shared `todos` fold and the projection-only Host plugin |
 | [`src/types.ts`](src/types.ts) | The one home of the `todos` projection-key declaration and its payload types |
 | [`src/client.ts`](src/client.ts) | Client-namespace re-export of the types outlet |
 | [`src/invariant.ts`](src/invariant.ts) | Invariant companion: validates durable whole-list snapshots and open-turn ownership |
@@ -91,7 +92,7 @@ The plugin is a function/namespace plugin: it exports `name` / `inject` / `apply
 
 ### Session projection
 
-When the composition mounts `ctx.sessionProjections` ([`@deepseek-ai/dsh-session-projection`](../../session/session-projection/README.md)), this package registers the `todos` unit on an injected child: the projection is the standing plan — the latest whole `todo/write` list, `null` before the first write, cleared when the next turn starts while `turn/end` keeps the finished checklist visible. The key merges into `SessionProjectionMap` here; carriers serve the value on the history tail page and the `session/projection` push frame. Compositions without the registry are unaffected; see [src/index.ts](src/index.ts) for the unit registration.
+The tool requires `ctx.sessionProjections` and registers the shared `todos` fold: the latest whole `todo/write` list, `null` before the first write or after the next `turn/start`; `turn/end` preserves the finished checklist. The `@deepseek-ai/dsh-tool-todo/projection` plugin requires only that registry and serves the same state for cold histories without registering `todo_write` or activating Agents. Web mounts this projection entry on the Host while presets own the tool. Each plugin owns one registration; the key remains available until its last owner unloads. See [src/projection.ts](src/projection.ts).
 
 ### Durable-log invariant
 

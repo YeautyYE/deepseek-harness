@@ -72,7 +72,7 @@ async function bench(opts: BenchOptions = {}) {
   // The service reads the generated commands Remote, which delivers the
   // carrier's outcome, so a programmed failure answers the error branch.
   const commandsRemote = {
-    list: async (sessionId: SessionId) => {
+    catalog: async (sessionId: SessionId) => {
       listCalls.push({ sessionId })
       return await carried(async () => {
         const value = await (opts.commands ?? (p => Promise.resolve({
@@ -117,8 +117,10 @@ async function bench(opts: BenchOptions = {}) {
       ? { parentSessionId: sid('parent'), childSessionId: id, mode: 'continuable' as const }
       : undefined,
   })
-  const remote = Object.assign(new TestRemote(ctx), { commands: commandsRemote })
+  const sessionRemote = { commandCatalog: commandsRemote.catalog }
+  const remote = Object.assign(new TestRemote(ctx), { commands: commandsRemote, session: sessionRemote })
   ctx.provide('remote.commands', commandsRemote)
+  ctx.provide('remote.session', sessionRemote)
   const executions: Array<{ sessionId: SessionId; name: string; result: CommandResult }> = []
   ctx.on('command/executed', (sessionId, name, result) => {
     executions.push({ sessionId, name, result })

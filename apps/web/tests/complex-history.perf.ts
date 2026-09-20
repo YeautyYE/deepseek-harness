@@ -339,13 +339,13 @@ function smallSidebarFixture(): string {
   session.append('turn/start', {
     turn: 1,
   })
+  session.append('step/start', { turn: 1, step: 1 })
+  appendSystemPrompt(session, 1, 1)
   const user = session.append('user/message', createUserMessage({
     content: text('Inspect this compact synthetic session.'),
     source: { kind: 'user' },
   }), { surfaceOp: 'append' })
   appendTitle(session, 'Synthetic sidebar session', user.seq)
-  session.append('step/start', { turn: 1, step: 1 })
-  appendSystemPrompt(session, 1, 1)
   appendRequestHeader(session, 1, 1)
   appendToolStep(session, 1, 1, 2)
   session.append('step/end', { turn: 1, step: 1 })
@@ -363,6 +363,8 @@ function longHistoryFixture(): string {
     session.append('turn/start', {
       turn,
     })
+    session.append('step/start', { turn, step: 1 })
+    if (turn === 1) appendSystemPrompt(session, turn, 1)
     const user = session.append('user/message', createUserMessage({
       content: text(
         `LONG_PERF_SENTINEL turn ${String(turn)}: analyze payload ${'u'.repeat(200)}`,
@@ -371,8 +373,6 @@ function longHistoryFixture(): string {
     }), { surfaceOp: 'append' })
     if (turn === 1) appendTitle(session, LONG_SESSION_TITLE, user.seq)
 
-    session.append('step/start', { turn, step: 1 })
-    if (turn === 1) appendSystemPrompt(session, turn, 1)
     appendRequestHeader(session, turn, 1)
     if (turn % TOOL_TURN_INTERVAL === 0) {
       appendToolStep(session, turn, 1, TOOLS_PER_TOOL_TURN)
@@ -923,18 +923,17 @@ async function closePerformanceWorld(world: PerformanceWorld): Promise<void> {
 
 async function openPerformancePage(
   world: PerformanceWorld,
-  expectedSessions: number,
 ): Promise<Locator> {
   await world.page.goto(world.scaffold.authenticatedUrl, { waitUntil: 'load' })
   await world.page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
   const group = world.page.getByRole('treeitem').first()
-  await expect.poll(() => group.textContent(), { timeout: 30_000 })
-    .toContain(`${String(expectedSessions)} ${expectedSessions === 1 ? 'session' : 'sessions'}`)
+  await group.waitFor({ timeout: 30_000 })
   return group
 }
 
 async function openLongHistory(page: Page): Promise<number> {
-  await page.getByRole('textbox', { name: 'Search name, keywords...', exact: true })
+  await page.getByRole('button', { name: 'Search sessions', exact: true }).click()
+  await page.getByPlaceholder('Search sessions...', { exact: true })
     .fill('LONG_PERF_SENTINEL')
   const results = page.getByRole('tree', { name: 'Search results' }).getByRole('treeitem')
   await expect.poll(() => results.count(), { timeout: 60_000 }).toBe(1)
@@ -1217,7 +1216,7 @@ describe('manual web performance: complex workspace and history', () => {
     })
     try {
       const bootStarted = performance.now()
-      const group = await openPerformancePage(world, SIDEBAR_SESSION_COUNT + 1)
+      const group = await openPerformancePage(world)
       const bootReadyMs = performance.now() - bootStarted
       const page = world.page
       const cdp = await page.context().newCDPSession(page)
@@ -1228,6 +1227,7 @@ describe('manual web performance: complex workspace and history', () => {
 
       const sidebar = await measure(cdp, async () => {
         await group.click()
+        await page.getByRole('button', { name: `Show ${String(SIDEBAR_SESSION_COUNT - 4)} more sessions`, exact: true }).click()
         return stableCount(
           page.getByRole('treeitem'),
           count => count === SIDEBAR_SESSION_COUNT + 2,
@@ -1238,7 +1238,8 @@ describe('manual web performance: complex workspace and history', () => {
       await expect.poll(() => page.getByRole('treeitem').count()).toBe(1)
 
       const contentSearch = await measure(cdp, async () => {
-        await page.getByRole('textbox', { name: 'Search name, keywords...', exact: true })
+        await page.getByRole('button', { name: 'Search sessions', exact: true }).click()
+        await page.getByPlaceholder('Search sessions...', { exact: true })
           .fill('LONG_PERF_SENTINEL')
         const results = page.getByRole('tree', { name: 'Search results' }).getByRole('treeitem')
         await expect.poll(() => results.count(), { timeout: 60_000 }).toBe(1)
@@ -1255,9 +1256,9 @@ describe('manual web performance: complex workspace and history', () => {
       const trajectoryRows = page.getByRole('row')
       const coldTrajectory = await measure(cdp, async () => {
         await page.getByRole('tab', { name: 'Trajectory', exact: true }).click()
-        return stableCount(trajectoryRows, count => count === EXPECTED_TRAJECTORY_ROWS)
+        return stableCount(trajectoryRows, count => count > 0 && count < EXPECTED_TRAJECTORY_ROWS)
       })
-      expect(coldTrajectory.value).toBe(EXPECTED_TRAJECTORY_ROWS)
+      expect(coldTrajectory.value).toBeLessThan(EXPECTED_TRAJECTORY_ROWS)
 
       const collapseTurns = await measure(cdp, async () => {
         await page.getByRole('button', { name: 'Collapse turns', exact: true }).click()
@@ -1287,9 +1288,9 @@ describe('manual web performance: complex workspace and history', () => {
 
       const warmTrajectory = await measure(cdp, async () => {
         await page.getByRole('tab', { name: 'Trajectory', exact: true }).click()
-        return stableCount(trajectoryRows, count => count === EXPECTED_TRAJECTORY_ROWS)
+        return stableCount(trajectoryRows, count => count > 0 && count < EXPECTED_TRAJECTORY_ROWS)
       })
-      expect(warmTrajectory.value).toBe(EXPECTED_TRAJECTORY_ROWS)
+      expect(warmTrajectory.value).toBeLessThan(EXPECTED_TRAJECTORY_ROWS)
       const warmConversation = await measure(cdp, async () => {
         await page.getByRole('tab', { name: 'Chat', exact: true }).click()
         return conversationTurns(page)
@@ -1336,7 +1337,7 @@ describe('manual web performance: complex workspace and history', () => {
       seedLongHistory: true,
     })
     try {
-      await openPerformancePage(world, 1)
+      await openPerformancePage(world)
       const cdp = await world.page.context().newCDPSession(world.page)
       await cdp.send('Performance.enable')
       const opened = await measure(cdp, () => openLongHistory(world.page))
@@ -1369,7 +1370,7 @@ describe('manual web performance: complex workspace and history', () => {
       seedLongHistory: true,
     })
     try {
-      await openPerformancePage(world, 1)
+      await openPerformancePage(world)
       const cdp = await world.page.context().newCDPSession(world.page)
       await cdp.send('Performance.enable')
       expect(await openLongHistory(world.page)).toBe(DEFAULT_HISTORY_TURNS)

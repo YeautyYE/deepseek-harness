@@ -168,22 +168,6 @@ export class ApiSessionAgentController {
    * @returns the live Agent or a stable Session-domain failure.
    */
   async resolveAgent(sessionId: SessionId): Promise<ApiSessionAgentResult> {
-    return this.resolve(sessionId)
-  }
-
-  /**
-   * Resolve one ordinary Session from an already-retained exact observation.
-   * @param observation - Host-owned observation whose preparation stays pinned through setup.
-   * @returns the live Agent or a stable Session-domain failure.
-   */
-  async resolveObservedAgent(observation: SessionObservation): Promise<ApiSessionAgentResult> {
-    return this.resolve(observation.header.id, observation)
-  }
-
-  private async resolve(
-    sessionId: SessionId,
-    observation?: SessionObservation,
-  ): Promise<ApiSessionAgentResult> {
     const live = this.liveAgent(sessionId)
     if (live !== undefined) return live
     const attached = this.ctx.sessions.get(sessionId)
@@ -193,7 +177,7 @@ export class ApiSessionAgentController {
 
     let resume = this.resumes.get(sessionId)
     if (resume === undefined) {
-      resume = this.resume(sessionId, observation).finally(() => { this.resumes.delete(sessionId) })
+      resume = this.resume(sessionId).finally(() => { this.resumes.delete(sessionId) })
       this.resumes.set(sessionId, resume)
     }
     try {
@@ -404,8 +388,7 @@ export class ApiSessionAgentController {
       : { agent }
   }
 
-  private async resume(sessionId: SessionId, supplied?: SessionObservation): Promise<Agent> {
-    if (supplied !== undefined) return this.resumeObserved(sessionId, supplied)
+  private async resume(sessionId: SessionId): Promise<Agent> {
     try {
       using observation = await this.ctx.sessionQuery.observeSession(sessionId)
       return await this.resumeObserved(sessionId, observation)

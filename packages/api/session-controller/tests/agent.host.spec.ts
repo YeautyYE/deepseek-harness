@@ -140,7 +140,7 @@ describe('ApiSession identity failures', () => {
 })
 
 describe('ApiSession Agent lookup and recovery', () => {
-  it('resumes directly from a retained observation and rejects an invalid observed header', async () => {
+  it('releases observations after explicit resume and rejects a mismatched observed identity', async () => {
     const { ctx, agents } = await harness()
     const meta = header('observed-resume')
     const resumed = unpublishedAgent(ctx, meta)
@@ -148,26 +148,24 @@ describe('ApiSession Agent lookup and recovery', () => {
       agent: resumed,
       dispose: () => Promise.resolve(),
     })
+    const dispose = vi.fn()
     const observed = {
-      source: 'prepared',
-      header: meta,
-      events: [],
-      cursor: -1,
+      source: 'prepared', header: meta, events: [], cursor: -1,
+      inheritedEventCount: SessionLogOffset(0),
       projections: { asOfSeq: -1, values: {} },
-      retain: vi.fn(),
-      [Symbol.dispose]: vi.fn(),
-    } as unknown as SessionObservation
+      retain: vi.fn(), [Symbol.dispose]: dispose,
+    } satisfies SessionObservation
+    const observe = vi.spyOn(ctx.sessionQuery, 'observeSession').mockResolvedValue(observed)
 
-    await expect(agents.resolveObservedAgent(observed)).resolves.toEqual({ agent: resumed })
+    await expect(agents.resolveAgent(meta.id)).resolves.toEqual({ agent: resumed })
     expect(resume).toHaveBeenCalledWith(expect.objectContaining({ resumeSessionId: meta.id }))
-
-    const invalid = {
-      ...observed,
-      header: header('observed-without-cwd', null),
-    } as SessionObservation
-    await expect(agents.resolveObservedAgent(invalid)).resolves.toMatchObject({
+    expect(dispose).toHaveBeenCalledOnce()
+    observe.mockResolvedValue({ ...observed, header: header('unrelated-observation') })
+    await expect(agents.resolveAgent(meta.id)).resolves.toMatchObject({
       error: { code: 'session/not-found' },
     })
+    expect(resume).toHaveBeenCalledOnce()
+    expect(dispose).toHaveBeenCalledTimes(2)
   })
 
   it('projects live Agent contexts and maps missing cold identities through Typert lookup failures', async () => {

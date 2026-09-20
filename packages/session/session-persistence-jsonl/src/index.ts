@@ -59,7 +59,8 @@ export type { JsonlCompression } from './format.ts'
 /**
  * Internal handoff-reuse policy, not deployment configuration: a cold
  * observation and the resume that immediately follows it reuse one parsed
- * log, so the memo only needs the sessions in flight between those steps.
+ * log while it remains reachable, so the weak memo only indexes the sessions
+ * in flight between those steps.
  */
 const COLD_LOG_MEMO_MAX_ENTRIES = 2
 
@@ -247,13 +248,13 @@ class JsonlSessionPersistence extends SessionPersistence {
   private readonly tracker = new JsonlBackendTracker(this.name)
   private readonly generationFormat: JsonlGenerationFormatAdapter
   /**
-   * Bounded LRU of parsed, validated stored logs keyed by session id and
+   * Bounded weak LRU of parsed, validated stored logs keyed by session id and
    * guarded by the stat-derived revision, so an immediate cold-read handoff
-   * (observation then resume) parses the artifact once. Every local mutation
+   * (observation then resume) can reuse the parse. Every local mutation
    * for an id invalidates its entry; a foreign write misses through the
-   * revision guard.
+   * revision guard. Completed reads leave no memo-owned event graph alive.
    */
-  private readonly coldLogMemo = new Map<SessionId, StoredLog>()
+  private readonly coldLogMemo = new Map<SessionId, WeakRef<StoredLog>>()
   /** One joinable decode/migration operation per selected historical Session file revision. */
   private readonly migrationPreparations = new Map<SessionId, MigrationPreparation>()
 
@@ -541,10 +542,10 @@ class JsonlSessionPersistence extends SessionPersistence {
       )
     }
     const probe = fileRevision(await stat(selected.sourcePath, { bigint: true }))
-    const memoized = this.coldLogMemo.get(id)
+    const memoized = this.coldLogMemo.get(id)?.deref()
     if (memoized?.status === 'current' && memoized.revision === probe) {
       this.coldLogMemo.delete(id)
-      this.coldLogMemo.set(id, memoized)
+      this.coldLogMemo.set(id, new WeakRef(memoized))
       return memoized
     }
     const current = await readStableJsonlFile(selected.sourcePath, signal)
@@ -565,10 +566,10 @@ class JsonlSessionPersistence extends SessionPersistence {
     signal: AbortSignal,
   ): Promise<PreparedStoredLog> {
     signal.throwIfAborted()
-    const memoized = this.coldLogMemo.get(id)
+    const memoized = this.coldLogMemo.get(id)?.deref()
     if (memoized?.status === 'prepared' && memoized.revision === sourceRevision) {
       this.coldLogMemo.delete(id)
-      this.coldLogMemo.set(id, memoized)
+      this.coldLogMemo.set(id, new WeakRef(memoized))
       return memoized
     }
     return this.prepareStoredMigration(id, selected, signal)
@@ -647,7 +648,7 @@ class JsonlSessionPersistence extends SessionPersistence {
       identity = await migration.value.publish()
     } catch (error: unknown) {
       /* v8 ignore else -- a newer preparation may have replaced this stale cache entry. */
-      if (this.coldLogMemo.get(id) === stored) this.coldLogMemo.delete(id)
+      if (this.coldLogMemo.get(id)?.deref() === stored) this.coldLogMemo.delete(id)
       throw this.generationFailure(id, migration.source, error)
     }
     const published: CurrentStoredLog = {
@@ -697,10 +698,10 @@ class JsonlSessionPersistence extends SessionPersistence {
   async readStoredLog(path: string, expectedId: SessionId, signal?: AbortSignal): Promise<CurrentStoredLog> {
     signal?.throwIfAborted()
     const probe = fileRevision(await stat(path, { bigint: true }))
-    const memoized = this.coldLogMemo.get(expectedId)
+    const memoized = this.coldLogMemo.get(expectedId)?.deref()
     if (memoized?.status === 'current' && memoized.revision === probe) {
       this.coldLogMemo.delete(expectedId)
-      this.coldLogMemo.set(expectedId, memoized)
+      this.coldLogMemo.set(expectedId, new WeakRef(memoized))
       return memoized
     }
     const { bytes, identity } = await readStableJsonlFile(path, signal)
@@ -767,10 +768,10 @@ class JsonlSessionPersistence extends SessionPersistence {
     return stored
   }
 
-  /** Insert one parsed log into the bounded handoff cache. */
+  /** Index one parsed log for handoff without extending its lifetime. */
   private memoizeStoredLog(id: SessionId, stored: StoredLog): void {
     this.coldLogMemo.delete(id)
-    this.coldLogMemo.set(id, stored)
+    this.coldLogMemo.set(id, new WeakRef(stored))
     for (const oldest of this.coldLogMemo.keys()) {
       if (this.coldLogMemo.size <= COLD_LOG_MEMO_MAX_ENTRIES) break
       this.coldLogMemo.delete(oldest)

@@ -352,10 +352,11 @@ function decodedLogWeight(values: readonly unknown[], limit: number): number {
     if (typeof value === 'string') {
       bytes += 32 + value.length * 2
     } else if (value !== null && typeof value === 'object') {
-      if (seen.has(value)) continue
-      seen.add(value)
-      bytes += 64
-      pending.push(Array.isArray(value) ? value.values() : propertyValues(value))
+      if (!seen.has(value)) {
+        seen.add(value)
+        bytes += 64
+        pending.push(Array.isArray(value) ? value.values() : propertyValues(value))
+      }
     } else {
       bytes += 8
     }

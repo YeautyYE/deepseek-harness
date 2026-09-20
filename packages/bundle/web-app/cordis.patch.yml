@@ -83,6 +83,12 @@
     - id: session-stats
       name: '@deepseek-ai/dsh-session-stats'
 
+    - id: todo-projection
+      name: '@deepseek-ai/dsh-tool-todo/projection'
+
+    - id: plan-projection
+      name: '@deepseek-ai/dsh-plan-mode/projection'
+
     # Whole-log turn outline for the chat turn rail (the turnOutline
     # projection key): every turn stays navigable before its events page in.
     - id: session-turn-outline

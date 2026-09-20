@@ -47,7 +47,7 @@ flowchart LR
 
 `SessionQueryEngine.observeSession(sessionId, options)` returns a disposable `SessionObservation` containing one source kind, header, contiguous event prefix, cursor, optional projection snapshot, and the durable revision for a prepared source. An attached Session wins. Otherwise the reader's own prepared cache, keyed by persistence instance and `stat().revision` and pinned by observation leases, reuses a completed cold read (`open(id, 'read')` + `read`). The [history retention decision](../bug-fix/2026-09-19-history-reader-retention.md) defines cache bounds and opening-reader lifetime.
 
-Every owner disposes its observation. `retain()` creates another lease over the same cut, which lets `session.follow` publish a snapshot and then transfer that exact prepared source to background Agent promotion without rereading the log. A live Session that appears during cold resolution wins before publication; a disappeared live source is retried as cold.
+Every owner disposes its observation. `retain()` creates an independently disposable lease over the same cut for overlapping readers. A live Session that appears during cold resolution wins before publication; a disappeared live source is retried as cold.
 
 ### Source resolution and lifetime
 
@@ -57,7 +57,7 @@ Live preference is checked both before and after a cold borrow. The second check
 
 Persistence absence maps to Session-not-found only after no attached Session exists. Durable corruption, source-identity conflict, cancellation, and operational persistence failure remain distinct `SessionQueryError` outcomes so API owners can preserve their own public error vocabulary without duplicating source detection.
 
-The observation owns no mutation authority. Its event array is an immutable prefix, and its prepared Session remains unpublished. Promotion is an explicit ownership transfer performed by the Session Controller after it has emitted the opening snapshot; other readers cannot turn an observation into a live Agent.
+The observation owns no mutation authority. Its event array is an immutable prefix, and its prepared Session remains unpublished. Explicit Agent commands resolve activation independently; history readers leave the prepared Session unpublished.
 
 Projection work is deliberately `all | none`. `all` computes every registered projection at the observation's event cursor; `none` leaves projection state untouched. There is no per-key preparation state, `projectionKeys` mode, or cached `viewedState`/`viewedValue` layer. A publisher may filter the completed values for an audience, but the underlying observation is never partly projected.
 
@@ -73,7 +73,7 @@ The registry owns fold state; each domain owns its `init`, `apply`, `view`, sche
 
 Corpus listing remains a separate lightweight operation. `listSessions()` returns live-preferred headers without materializing every log. Session list and subagent list first use live projection state or durable projection-cache rows. Session list may take one complete observation for an individually stored artifact within its configured small-log limit when cached metadata cannot establish whether it is blank; a large or unreadable cache miss remains visible with unknown hints.
 
-`session.follow` publishes a required opening snapshot containing header, cursor, the initial event window, and a complete projection baseline. Reconnect replaces the previous generation from another complete snapshot. `session.page` is reserved for older-history reads and gap repair. Observation-only reads never activate an Agent; only an ordinary follow may retain its prepared observation and request promotion after the opening snapshot has been delivered.
+`session.follow` publishes a required opening snapshot containing header, cursor, the initial event window, and a complete projection baseline. Reconnect replaces the previous generation from another complete snapshot. `session.page` is reserved for older-history reads and gap repair. Observation-only reads, including ordinary follow, never activate an Agent. [Non-activating history follow](../bug-fix/2026-09-20-nonactivating-history-follow.md) supersedes the former promotion policy while retaining the observation and projection decisions.
 
 ### Read audiences
 
@@ -83,7 +83,7 @@ Each public operation chooses one query and projection policy. The choice is par
 |---|---|---|---|
 | `session.list` | Corpus headers, live state, and cached rows; bounded small-log fallback | Partial hints, or one full small-log observation | Never |
 | `session.search` | Corpus authorization plus the configured search provider | None for result listing | Never |
-| `session.follow` | One exact observation | All, carried in the opening snapshot | Ordinary cold Session only, after snapshot delivery |
+| `session.follow` | One exact observation | All, carried in the opening snapshot | Never |
 | `session.page` | One exact observation | None, except projection-backed subagent authorization | Never |
 | Attachment and fork source | One exact observation | None unless authorization requires it | Never for the source |
 | Subagent list and continuation | Corpus plus live/cache/observation resolution | All on a cold fallback; audience consumes identity or inherited values | Never for listing; continuation follows its explicit command semantics |
@@ -172,7 +172,7 @@ These rules apply to new Session-derived Client state even when a direct event s
 
 ## Verification
 
-Persistence and SessionQuery tests pin shared cold loading, cancellation, live-source races, retained observations, disposal, and all-or-none projection calculation. Session Controller and Gateway tests pin snapshot-first opening, replacement reconnect, older-page reads, gap repair, list-cache hints, bounded small-log fallback, and promotion after snapshot delivery.
+Persistence and SessionQuery tests pin shared cold loading, cancellation, live-source races, retained observations, disposal, and all-or-none projection calculation. Session Controller and Gateway tests pin snapshot-first opening, replacement reconnect, older-page reads, gap repair, list-cache hints, bounded small-log fallback, and explicit command activation after a cold opening.
 
 Client tests pin higher-sequence-wins projection storage, title updates, model catalog and selection readiness, preset roster refresh and Session-specific selection, and subagent loading without transient offline presentation. Subagent tests pin corpus enumeration, cache and observation fallback, lifecycle witnesses, bounded cold reads, and no Agent activation during listing.
 
@@ -194,7 +194,7 @@ Client tests pin higher-sequence-wins projection storage, title updates, model c
 
 ## Consequences
 
-Session consumers share one live-preferred read model and one prepared cold object. Header, events, cursor, and projections belong to the same observation, and ordinary page opening can reuse that object for later promotion. New point-read consumers use SessionQuery instead of composing persistence and registry calls themselves.
+Session consumers share one live-preferred read model and one prepared cold object. Header, events, cursor, and projections belong to the same observation, and repeated reads can reuse a retained preparation. New point-read consumers use SessionQuery instead of composing persistence and registry calls themselves.
 
 Session-derived Client state has one extension path: record or identify the durable input, register a pure projection unit, and consume its finished value through the generic store. Domain-specific catalogs may remain separate when they are not Session-derived, but they cannot substitute a default for an unknown Session projection.
 

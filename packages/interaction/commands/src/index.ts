@@ -307,13 +307,12 @@ export class CommandRuntime extends TypertRemoteService {
   }
 
   /**
-   * List the effective immutable command descriptors for one agent.
-   * @param agent - exact receiving agent and scoped-layer key.
+   * List the effective immutable command descriptors for one scope.
+   * @param scope - live Agent, standing preset scope, or undefined for global commands.
    * @returns name-sorted descriptors after scoped shadowing.
    */
-  @Remote
-  list(agent: Agent): readonly CommandDescriptor[] {
-    return Object.freeze([...this.view(agent).values()]
+  list(scope: ScopeKey | undefined): readonly CommandDescriptor[] {
+    return Object.freeze([...this.view(scope).values()]
       .map(command => command.descriptor)
       // Names are unique in the effective view, so equality is impossible.
       .sort((left, right) => left.name < right.name ? -1 : 1))
@@ -467,8 +466,8 @@ export class CommandRuntime extends TypertRemoteService {
   }
 
   /** Resolve global definitions followed by exact scoped shadows. */
-  private view(agent: Agent): Map<string, RegisteredCommand> {
-    return this.layers.merge(agent, layer => layer.commands)
+  private view(scope: ScopeKey | undefined): Map<string, RegisteredCommand> {
+    return this.layers.merge(scope, layer => layer.commands)
   }
 
   /** Notify every registry observer without making UI refresh load-bearing. */

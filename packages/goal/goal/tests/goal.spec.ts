@@ -103,6 +103,20 @@ function appendRound(session: Session, ref: GoalRef, round: number): void {
 }
 
 describe('GoalService creation and replay', () => {
+  it('reads Remote goal activation only from an existing live Agent', async () => {
+    const { ctx, agent } = await harness()
+    try {
+      const resume = vi.spyOn(ctx.agents, 'resume')
+      expect(ctx.goals.remoteExportGet(SessionId('cold-goal'))).toBeUndefined()
+      expect(ctx.goals.remoteExportGet(agent.id)).toBeUndefined()
+      const created = ctx.goals.create(agent, { objective: 'preserve history' })
+      expect(ctx.goals.remoteExportGet(agent.id)).toEqual(created)
+      expect(resume).not.toHaveBeenCalled()
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('does not activate without the required projection registry', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentRegistry)

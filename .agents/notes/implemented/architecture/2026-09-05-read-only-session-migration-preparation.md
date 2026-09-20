@@ -61,7 +61,7 @@ interface MigrationPreparation {
 
 A new read or write open joins the existing entry only when its source path and revision still match. `waitWithAbort()` races each caller's AbortSignal against the shared Promise without forwarding that signal to shared work. The backend-owned controller is aborted only when the last waiter leaves while preparation is still running. The cancellation test pauses the physical read and observes two registered waiters before aborting one caller; an event-loop yield alone cannot establish admission after asynchronous path and revision lookup.
 
-Completed results enter the existing bounded `coldLogMemo`. The `StoredLog` discriminant separates published current state from `PreparedStoredLog`, whose `publication` field binds current logical events to their matching publication operation. A query followed by Agent resume therefore reuses the same Decode and migration result. The in-flight map owns only running work; it is not a second completed-result cache.
+Completed results enter the bounded weak `coldLogMemo`. The `StoredLog` discriminant separates published current state from `PreparedStoredLog`, whose `publication` field binds current logical events to their matching publication operation. A query followed by Agent resume can reuse the same Decode and migration result while it remains reachable. The in-flight map owns only running work; it is not a second completed-result cache.
 
 `SessionHandle.read()` reports whether its event values are detached or shared-frozen. The JSONL backend deep-freezes each decoded event graph once before memoization and creates the `shared-frozen` result there; later reads and slices preserve that producer-established state even when the slice is empty. `readColdSessionLog()` combines those values with locally owned interrupted-turn closers and passes the `eventState` through `SessionObservationReader`; `Session.fromRestore()` validates and adopts the seed without copying or freezing. Ordinary create and fork seeds keep their defensive snapshot path.
 
@@ -100,9 +100,9 @@ write open
 
 No external caller can append before the handle exists. `append`, `flush`, and `close` therefore retain their ordinary current-generation behavior and never need a “publishing” branch. Service `flush()` continues to flush only already adopted writers; it does not turn a read-only preparation into a write.
 
-### Follow and Agent promotion
+### Follow and explicit Agent activation
 
-`session.follow` opens history through the read path, restores the Session and projections, emits the opening snapshot, and then starts Agent promotion. Agent resume uses write open, so it waits for publication before the Agent accepts a new turn. History visibility and write readiness are separate timing points without introducing an unpublished append state.
+`session.follow` opens history through the read path, restores the Session and projections, and emits the opening snapshot without activating an Agent. [Non-activating history follow](../bug-fix/2026-09-20-nonactivating-history-follow.md) owns this activation policy; a later explicit command resumes the Agent. Agent resume uses write open, so it waits for publication before the Agent accepts a new turn. History visibility and write readiness are separate timing points without introducing an unpublished append state.
 
 ## Problem-to-solution mapping
 
@@ -111,7 +111,7 @@ No external caller can append before the handle exists. `append`, `flush`, and `
 | Read-only callers wait for encode and verify | Read open returns prepared events | First content waits only for Decode and migration |
 | Concurrent historical opens repeat work | Session/source-revision keyed single-flight | One migration per selected revision |
 | First caller owns shared cancellation | Caller-local `waitWithAbort()` plus backend controller | One cancellation does not kill other waiters |
-| Preparation is lost between query and resume | `PreparedStoredLog.publication` in bounded memo | Write open reuses the same artifact |
+| Preparation is lost between query and resume | `PreparedStoredLog.publication` in bounded weak memo | Write open can reuse a reachable artifact |
 | No current path exists for a read handle | Primed in-memory read | Historical data is readable before publication |
 | Read handle must observe later append | Re-resolve and switch from primed data to current file | Existing handles converge after publication |
 | Append before verification is unsafe | Publish inside write open before returning the handle | Returned writer is immediately durable-ready |
@@ -153,7 +153,7 @@ Tests cover shared-waiter cancellation, all-waiters cancellation, memo handoff, 
 
 Read-only body access does not publish a generation. The first writer pays publication once before append. A configured JSONL root must still be readable and structurally valid, but historical body migration itself does not require a successor write.
 
-The bounded memo retains one migrated event array to bridge read and write opens. This is intentional: avoiding that retained artifact would require a second Decode and migration or would prevent early read availability.
+The bounded weak memo indexes migrated artifacts for reuse between read and write opens. [Reader retention](../bug-fix/2026-09-19-history-reader-retention.md) supersedes strong memo ownership: active handles and operations retain needed artifacts, while a later open repeats Decode and migration after collection.
 
 Publication failure rejects Agent resume and other write opens but does not invalidate read results already delivered from the unchanged historical source. Source drift is terminal for that write attempt rather than a trigger to recompute hidden state.
 

@@ -73,6 +73,8 @@ pause、complete、block 和 clear 都会停用续行。block 是唯一保留策
 
 ### 观察 goal
 
+浏览器通过 `goal` 投影读取持久状态。`goals.get(sessionId)` 只读取已有在线 Agent，冷 Session 或没有当前 goal 时返回 `undefined`；它绝不恢复 Agent。持久化的 active goal 在没有在线 Agent 时处于 disarmed 状态。
+
 消费方用 `ctx.goals.get(agent)` 读取当前 goal，获得脱离内部状态的视图：目标、phase、已开始与上限 Round 数量、被阻塞时的 blocker reason，以及续行是否已启用。变更必须携带该视图中的精确 `{ id, revision }`，因此持有旧状态的消费方会收到清晰的陈旧 revision 错误，而不是静默覆盖更新的状态：
 
 ```text

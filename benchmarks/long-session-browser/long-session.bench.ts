@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { chromium, type Page, type CDPSession, type Locator } from 'playwright'
 import { expect, it } from 'vitest'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import { launchWebScaffold, seedSession, watchConsole, webSnapshotMode } from '../../apps/web/tests/scaffold.ts'
 import { newEnglishPage } from '../../apps/web/tests/support.ts'
 import { ciTimeBudget, PERFORMANCE_BUDGET_HEADROOM } from '../support/calibration.ts'
@@ -159,6 +160,8 @@ it('opens, pages, navigates and streams into a 240-turn browser history', async 
             await page.locator(TAIL).last().waitFor()
             await page.locator('[data-composer-input][contenteditable="true"]').last().waitFor()
           })
+          expect(scaffold.ctx.agents.get(SessionId(SESSION_ID))).toBeUndefined()
+          expect(scaffold.ctx.sessions.get(SessionId(SESSION_ID))).toBeUndefined()
           const pages: number[] = []
           const initialTurns = await page.locator(TAIL).count()
           expect(initialTurns).toBeGreaterThan(0)
@@ -178,6 +181,8 @@ it('opens, pages, navigates and streams into a 240-turn browser history', async 
           })
           await page.getByRole('tab', { name: 'Chat', exact: true }).click()
           await page.waitForFunction(({ selector, expected }) => document.querySelectorAll(selector).length === expected, { selector: TAIL, expected: HISTORY_TURNS })
+          expect(scaffold.ctx.agents.get(SessionId(SESSION_ID))).toBeUndefined()
+          expect(scaffold.ctx.sessions.get(SessionId(SESSION_ID))).toBeUndefined()
           const composer = page.locator('[data-composer-input][contenteditable="true"]').last()
           await composer.fill('Continue the synthetic review and summarize the validation. '.repeat(30))
           const cdp = await page.context().newCDPSession(page)
@@ -209,6 +214,7 @@ it('opens, pages, navigates and streams into a 240-turn browser history', async 
           await painted(page)
           const streamWall = performance.now() - started
           const streamTask = await taskMs(cdp) - beforeTask
+          expect(scaffold.ctx.agents.get(SessionId(SESSION_ID))).toBeDefined()
           await cdp.send('HeapProfiler.collectGarbage')
           const metrics = (await cdp.send('Performance.getMetrics')).metrics
           const heap = metrics.find(metric => metric.name === 'JSHeapUsedSize')

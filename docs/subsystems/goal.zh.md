@@ -184,7 +184,14 @@ Goal service (`ctx.goals`) backed exclusively by the owning session log.
  * @returns a fresh view or `undefined` when no goal is current.
  * @throws {@link GoalError} when the agent is not the registry's live instance.
  */
-@Remote('get') get(agent: Agent): GoalView | undefined
+get(agent: Agent): GoalView | undefined
+
+/**
+ * Read process-local goal activation without resuming a cold Session.
+ * @param sessionId - Session identity whose live Agent may own a current goal.
+ * @returns the live goal view, or `undefined` when no live Agent or current goal exists.
+ */
+@Remote('get') remoteExportGet(sessionId: SessionId): GoalView | undefined
 
 /**
  * Remove process-local continuation authority without changing durable goal
@@ -264,7 +271,7 @@ block(agent: Agent, ref: GoalRef, reason: GoalBlockReason): GoalView
 @Remote('create') remoteExportCreate(agent: Agent, request: CreateGoalRequest): CreateGoalResult
 ```
 
-Types: [Agent](core.zh.md)
+Types: [Agent](core.zh.md) · [SessionId](core.zh.md)
 
 Source: [`packages/goal/goal/src/index.ts`](../../packages/goal/goal/src/index.ts)
 

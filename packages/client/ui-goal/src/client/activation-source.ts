@@ -13,7 +13,7 @@ export interface GoalActivationDeps {
   readonly projection: HostObservable<GoalProjection | null | undefined>
   /** Session snapshot; running flips trigger a fresh authoritative read. */
   readonly session: HostObservable<{ readonly running: boolean }>
-  /** Read the current live goal at call time. */
+  /** Read the current live goal without activating a cold Session. */
   readonly getGoal: () => Promise<RemoteResult<GoalView | undefined>>
   /** Subscribe to activation edges after the transport delivers them. */
   readonly subscribeActivation: (listener: (goal: GoalActivationChanged['goal']) => void) => () => void
@@ -63,9 +63,8 @@ export function createGoalActivationSource(deps: GoalActivationDeps): HostObserv
       if (read !== readEpoch || startedAtEvent !== eventEpoch || startedAtProjection !== projectionEpoch) return
       if (!result.ok) return
       const goal = result.value
-      /* v8 ignore next 4 -- projection drive is the authoritative clear edge; an active projection with no live goal is transient. */
       if (goal === undefined) {
-        if (activeRef(deps.projection.getSnapshot()) === undefined) publish({})
+        publish({ id: ref.id, revision: ref.revision, activation: 'disarmed' })
         return
       }
       publish({ id: goal.id, revision: goal.revision, activation: goal.activation })

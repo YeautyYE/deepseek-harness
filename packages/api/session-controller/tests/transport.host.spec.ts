@@ -77,7 +77,7 @@ async function setup(): Promise<{ ctx: Context; transport: SessionHistoryControl
   await ctx.plugin(SessionStore)
   installSessionReadTestServices(ctx)
   ctx.sessionProjections.register(subagentIdentityProjectionDefinition)
-  const transport = new SessionHistoryController(ctx, (observation) => { observation[Symbol.dispose]() })
+  const transport = new SessionHistoryController(ctx)
   return { ctx, transport }
 }
 
@@ -116,7 +116,7 @@ describe('SessionHistoryController', () => {
     let transport!: SessionHistoryController
     const owner = ctx.plugin(Object.assign(
       (inner: Context) => {
-        transport = new SessionHistoryController(inner, (observation) => { observation[Symbol.dispose]() })
+        transport = new SessionHistoryController(inner)
       },
       { inject: ['sessions', 'sessionQuery'] },
     ))
@@ -220,7 +220,7 @@ describe('SessionHistoryController', () => {
     }
     const observed = deferred<SessionObservation>()
     ctx.provide('sessionQuery', { observeSession: () => observed.promise } as never)
-    const transport = new SessionHistoryController(ctx, vi.fn())
+    const transport = new SessionHistoryController(ctx)
     const abort = new AbortController()
     const iterator = transport.follow({ address: { kind: 'session', sessionId } }, abort.signal)
       [Symbol.asyncIterator]()
@@ -260,7 +260,7 @@ describe('SessionHistoryController', () => {
     let agentCtx!: Context
     await ctx.plugin(Object.assign(
       (inner: Context) => {
-        transport = new SessionHistoryController(inner, (observation) => { observation[Symbol.dispose]() })
+        transport = new SessionHistoryController(inner)
       },
       { inject: ['sessions', 'sessionQuery'] },
     ))
@@ -383,7 +383,7 @@ describe('SessionHistoryController', () => {
         retain: vi.fn(), [Symbol.dispose]: vi.fn(),
       } satisfies SessionObservation),
     } as never)
-    const history = new SessionHistoryController(ctx, vi.fn())
+    const history = new SessionHistoryController(ctx)
     const abort = new AbortController()
     const iterator = history.follow({ address: { kind: 'session', sessionId } }, abort.signal)
       [Symbol.asyncIterator]()
@@ -393,35 +393,6 @@ describe('SessionHistoryController', () => {
     })
     abort.abort()
     await expect(iterator.next()).resolves.toMatchObject({ done: true })
-    await ctx.fiber.dispose()
-  })
-
-  it('disposes a retained promotion when background activation rejects synchronously', async () => {
-    const ctx = new Context()
-    await ctx.plugin(SessionStore)
-    const sessionId = SessionId('promotion-failure')
-    const meta = { version: SESSION_FORMAT_VERSION, id: sessionId, createdAt: 1, cwd: '/workspace' }
-    const disposePromotion = vi.fn()
-    const promotion = {
-      source: 'prepared', header: meta, events: [], cursor: -1,
-      projections: { asOfSeq: -1, values: {} },
-      retain: vi.fn(), [Symbol.dispose]: disposePromotion,
-    } as unknown as SessionObservation
-    const source = {
-      ...promotion,
-      retain: () => promotion,
-      [Symbol.dispose]: vi.fn(),
-    } as SessionObservation
-    ctx.provide('sessionQuery', {
-      observeSession: () => Promise.resolve(source),
-    } as never)
-    const history = new SessionHistoryController(ctx, () => { throw new Error('activation failed') })
-    const iterator = history.follow({ address: { kind: 'session', sessionId } }, signal())
-      [Symbol.asyncIterator]()
-
-    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'snapshot' } })
-    await expect(iterator.next()).rejects.toThrow('activation failed')
-    expect(disposePromotion).toHaveBeenCalledOnce()
     await ctx.fiber.dispose()
   })
 
@@ -656,7 +627,7 @@ describe('SessionHistoryController', () => {
         retain: vi.fn(), [Symbol.dispose]: vi.fn(),
       } as unknown as SessionObservation),
     } as never)
-    const history = new SessionHistoryController(ctx, vi.fn())
+    const history = new SessionHistoryController(ctx)
 
     await expect(history.page({
       address: { kind: 'subagent', parentSessionId, childSessionId, mode: 'continuable' },

@@ -19950,7 +19950,7 @@
         "event:plan/mode.data"
       ],
       "sources": [
-        "packages/plan/plan-mode/src/index.ts:47"
+        "packages/plan/plan-mode/src/types.ts:45"
       ]
     },
     {

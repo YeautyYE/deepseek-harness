@@ -5,13 +5,17 @@ import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-client-file-upload'
+import type { CommandDescriptor } from '@deepseek-ai/dsh-commands'
+import type { ScopeKey } from '@deepseek-ai/dsh-scope'
 import { canOpenNativePath, nativeFileManager, openNativePath, revealNativePath } from '@deepseek-ai/dsh-native-command'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionInspection } from '@deepseek-ai/dsh-session-persistence'
-import type { SessionObservation } from '@deepseek-ai/dsh-session-query'
+import { SessionQueryError } from '@deepseek-ai/dsh-session-query'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import {
   ApiSessionAgentController,
+  apiSessionSubagentOwnershipError,
+  hasApiSessionSubagentOwner,
   inspectApiSession,
   type ApiSessionAgentResult,
 } from './agent.ts'
@@ -110,7 +114,6 @@ export class SessionController extends TypertRemoteService {
   private readonly openPath: (path: string, signal: AbortSignal) => Promise<void>
   private readonly revealPath: (path: string, signal: AbortSignal) => Promise<void>
   private readonly canOpenPath: () => boolean
-  private readonly promotions = new Set<Promise<void>>()
 
   /**
    * @param ctx - Host context containing the Session capability assembly.
@@ -128,12 +131,7 @@ export class SessionController extends TypertRemoteService {
       return result.agent
     }), 'session-controller: file-upload Agent resolver')
     this.controlState = new SessionControlController(ctx)
-    // Registered before history so reverse-order teardown closes every
-    // follower before waiting for already-admitted promotions.
-    ctx.effect(() => async () => {
-      await Promise.allSettled([...this.promotions])
-    }, 'session-controller.promotions')
-    this.history = new SessionHistoryController(ctx, (observation) => { this.promote(observation) })
+    this.history = new SessionHistoryController(ctx)
     this.listState = new ApiSessionList(ctx)
     this.openPath = internals.openPath ?? openNativePath
     this.revealPath = internals.revealPath ?? revealNativePath
@@ -170,19 +168,6 @@ export class SessionController extends TypertRemoteService {
     })
   }
 
-  private promote(observation: SessionObservation): void {
-    const sessionId = observation.header.id
-    const task = (async () => {
-      using ownedObservation = observation
-      const result = await this.agents.resolveObservedAgent(ownedObservation)
-      if ('error' in result) this.ctx.emit('api-session/error', sessionId, result.error.message)
-    })().catch((error: unknown) => {
-      this.ctx.logger.error(`session-controller: background activation for "${sessionId}" failed: ${errorChain(error)}`)
-    })
-    this.promotions.add(task)
-    void task.finally(() => { this.promotions.delete(task) })
-  }
-
   /**
    * Resolve or resume one ordinary Session for another Host API domain.
    * @param sessionId - Session identity whose Agent owns the operation.
@@ -190,6 +175,44 @@ export class SessionController extends TypertRemoteService {
    */
   resolveAgent(sessionId: SessionId): Promise<ApiSessionAgentResult> {
     return this.agents.resolveAgent(sessionId)
+  }
+
+  /**
+   * Read a live or stored Session's effective command catalog without activating its Agent.
+   * @param sessionId - Session identity whose recorded preset selects the scoped commands.
+   * @param signal - caller cancellation for the observation and catalog publication.
+   * @returns immutable name-sorted descriptors after scoped shadowing.
+   */
+  @Remote('commandCatalog')
+  async commandCatalog(sessionId: SessionId, signal: AbortSignal): Promise<readonly CommandDescriptor[]> {
+    signal.throwIfAborted()
+    const commands = this.ctx.get('commands')
+    if (commands === undefined) throw new RemoteError('gateway/internal', 'command registry is absent', {})
+    const live = this.ctx.agents.get(sessionId)
+    if (live !== undefined) {
+      if (hasApiSessionSubagentOwner(this.ctx, live.session, live)) throw apiSessionSubagentOwnershipError(sessionId)
+      return commands.list(live)
+    }
+    let preset: string | undefined
+    try {
+      using observation = await this.ctx.sessionQuery.observeSession(sessionId, { signal })
+      if (observation.header.cwd === undefined) {
+        throw new RemoteError('session/not-found', `session "${sessionId}" has no project cwd`, { sessionId })
+      }
+      if (hasApiSessionSubagentOwner(this.ctx, { header: observation.header }, undefined)) {
+        throw apiSessionSubagentOwnershipError(sessionId)
+      }
+      if (observation.projections === undefined) throw new Error('command catalog requires a projected Session observation')
+      preset = observation.projections.values.agentPreset ?? undefined
+    } catch (error: unknown) {
+      if (error instanceof SessionQueryError && error.code === 'SESSION_QUERY_SESSION_NOT_FOUND') {
+        throw new RemoteError('session/not-found', `session "${sessionId}" not found`, { sessionId })
+      }
+      throw error
+    }
+    const scope: ScopeKey | undefined = await this.ctx.get('agentPresets')?.standingKeyFor(preset)
+    signal.throwIfAborted()
+    return commands.list(scope)
   }
 
   /**

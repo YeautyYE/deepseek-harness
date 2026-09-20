@@ -36,7 +36,7 @@ Three limits stay open and are recorded where they bite rather than fixed here: 
 
 **Check the join at `agent/created` in the companion too.** Rejected: publication cannot distinguish a missed join from an agent that will be bound later, so the check would reject a documented path. Prompt assembly can distinguish them.
 
-**Move `plan-mode` and `tool-todo` off the agent plane for the same projection reason.** Rejected: both are genuinely per-preset capabilities, and their units compute an empty value for a session that never uses them, which clients already read by value (`plan.active`, an empty list). Only a unit whose empty value is indistinguishable from a real one — the meter — forces host ownership.
+**Move `plan-mode` and `tool-todo` off the agent plane for the same projection reason.** Rejected: both are genuinely per-preset capabilities, and their units compute an empty value for a session that never uses them, which clients already read by value (`plan.active`, an empty list). The model-facing capability stays per-preset; [non-activating history follow](../bug-fix/2026-09-20-nonactivating-history-follow.md) separately mounts their pure projection readers on the Web Host so cold histories display stored state.
 
 ## Consequences
 

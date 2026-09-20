@@ -678,7 +678,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 'plan/mode': { active: boolean }
 ```
 
-来源：[`packages/plan/plan-mode/src/index.ts:47`](../packages/plan/plan-mode/src/index.ts)
+来源：[`packages/plan/plan-mode/src/types.ts:45`](../packages/plan/plan-mode/src/types.ts)
 
 ### `request/*`
 
@@ -2975,7 +2975,7 @@ SHA-256: `a7cf43ce7c2a4c038feed1885cd7a00d5c6ee2d90a7e0d56b46f78a3e1ca327f`
 
 SHA-256: `20a57544bbf204dacd1ae6beb2ab29444365c3c869f2afdf489dcdcbc3d9c8c5`
 
-来源：[`packages/plan/plan-mode/src/index.ts:47`](../packages/plan/plan-mode/src/index.ts)
+来源：[`packages/plan/plan-mode/src/types.ts:45`](../packages/plan/plan-mode/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|

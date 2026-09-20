@@ -43,14 +43,8 @@ export class SessionHistoryController {
   private readonly closeFollowers = new Set<() => void>()
   private readonly assistantStreams = new Map<SessionId, SessionAssistantStreamAccumulator>()
 
-  /**
-   * @param ctx - Host context carrying Session query and projection services.
-   * @param promote - starts ordinary Session activation after snapshot delivery.
-   */
-  constructor(
-    private readonly ctx: Context,
-    private readonly promote: (observation: SessionObservation) => void,
-  ) {
+  /** @param ctx - Host context carrying Session query and projection services. */
+  constructor(private readonly ctx: Context) {
     ctx.on('agent/assistant-stream', ({ agent, frame }) => {
       let stream = this.assistantStreams.get(agent.session.id)
       if (stream === undefined) {
@@ -242,15 +236,6 @@ export class SessionHistoryController {
         ? { asOfSeq: cursor, values: {} }
         : projectionBlock(source.projections),
       ...assistantStream === undefined ? {} : { assistantStream },
-    }
-    if (request.address.kind === 'session' && source.source === 'prepared') {
-      const promotion = source.retain()
-      try {
-        this.promote(promotion)
-      } catch (error: unknown) {
-        promotion[Symbol.dispose]()
-        throw error
-      }
     }
     return { cursor, assistantStreamOrdinalCut }
   }

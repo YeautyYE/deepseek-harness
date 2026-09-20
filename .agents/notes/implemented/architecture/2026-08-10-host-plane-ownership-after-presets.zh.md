@@ -36,7 +36,7 @@ Status: implemented
 
 **让配套也在 `agent/created` 处检查加入情况。** 否决：发布时分不清漏掉的加入与之后才会被绑定的 agent，因此该检查会拒绝一条已写明的路径。提示词组装分得清。
 
-**基于同样的投影理由，把 `plan-mode` 与 `tool-todo` 也搬离 agent 平面。** 否决：两者确实是逐 preset 的能力，且对从不使用它们的会话，其单元算出的就是空值，而客户端本来就按值读取（`plan.active`、空列表）。只有空值与真实值无法区分的单元——meter——才被迫归宿主所有。
+**基于同样的投影理由，把 `plan-mode` 与 `tool-todo` 也搬离 agent 平面。** 否决：两者确实是逐 preset 的能力，且对从不使用它们的会话，其单元算出的就是空值，而客户端本来就按值读取（`plan.active`、空列表）。[不激活 Agent 的历史跟随](../bug-fix/2026-09-20-nonactivating-history-follow.zh.md) 单独把纯投影读取方挂载到 Web Host，使冷历史展示已保存状态；面向模型的能力仍属于各 preset。
 
 ## 后果
 

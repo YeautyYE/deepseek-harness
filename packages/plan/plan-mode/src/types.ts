@@ -35,6 +35,17 @@ export interface PlanUnitState {
   activeAtLastHeader: boolean | null
 }
 
+declare module '@deepseek-ai/dsh-session/types' {
+  interface SessionEventMap {
+    /**
+     * Whether plan mode is in force from this point on: log-only, non-surface,
+     * whole-value replace. The last `plan/mode` wins; a log with none folds to
+     * inactive through the projection unit's fold.
+     */
+    'plan/mode': { active: boolean }
+  }
+}
+
 declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionStateMap {
     /** Host plan-mode fold state. */

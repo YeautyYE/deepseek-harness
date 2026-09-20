@@ -61,7 +61,7 @@ interface MigrationPreparation {
 
 新的 read/write open 只有在 source path 与 revision 仍匹配时才加入已有 entry。`waitWithAbort()` 让每个 caller 的 AbortSignal 与 shared Promise 竞争，但不会把 caller signal 传给共享工作。只有最后一个 waiter 在 preparation 仍运行时离开，backend-owned controller 才会 abort。取消测试暂停物理读取，并在取消一个 caller 前观察到两个已注册的 waiter；仅让出一次事件循环不能证明异步路径与 revision 查找后的加入已经完成。
 
-完成结果进入既有 bounded `coldLogMemo`。`StoredLog` 判别字段把已发布 current state 与 `PreparedStoredLog` 分开，后者的 `publication` 字段把 current logical events 与匹配的 publication operation 绑定，使 query 后紧接的 Agent resume 复用同一次 Decode 与 migration。In-flight map 只拥有运行中的工作，不是第二个 completed-result cache。
+完成结果进入 bounded weak `coldLogMemo`。`StoredLog` 判别字段把已发布 current state 与 `PreparedStoredLog` 分开，后者的 `publication` 字段把 current logical events 与匹配的 publication operation 绑定，使 query 后紧接的 Agent resume 可在结果仍可达时复用同一次 Decode 与 migration。In-flight map 只拥有运行中的工作，不是第二个 completed-result cache。
 
 `SessionHandle.read()` 会报告 event value 是 detached 还是 shared-frozen。JSONL backend 在 memo 化前只对每个已解码 event graph 深度冻结一次，并在该处构造 `shared-frozen` 结果；后续读取和 slice 即使为空也会保留生产者建立的状态。`readColdSessionLog()` 将这些 event 与本地独占的 interrupted-turn closer 组合，并通过 `SessionObservationReader` 继续传递 `eventState`；`Session.fromRestore()` 只校验和接管 seed，不再复制或冻结。普通 create 与 fork seed 继续使用 defensive snapshot 路径。
 
@@ -100,9 +100,9 @@ write open
 
 Handle 返回前，外部 caller 无法 append。因此 `append`、`flush` 与 `close` 保持普通 current-generation 行为，不需要“publishing”分支。Service `flush()` 继续只 flush 已经 adopt 的 writer；它不会把 read-only preparation 转成 write。
 
-### Follow 与 Agent promotion
+### Follow 与显式 Agent 激活
 
-`session.follow` 通过 read path 打开历史、恢复 Session 与 projections、发出 opening snapshot，然后启动 Agent promotion。Agent resume 使用 write open，因此会在 Agent 接收新一轮对话前等待 publication。历史可见与写入就绪成为两个明确时间点，同时不引入 unpublished append state。
+`session.follow` 通过 read path 打开历史、恢复 Session 与 projections、发出 opening snapshot，不激活 Agent。[不激活 Agent 的历史跟随](../bug-fix/2026-09-20-nonactivating-history-follow.zh.md) 拥有此激活策略；后续显式命令会恢复 Agent。Agent resume 使用 write open，因此会在 Agent 接收新一轮对话前等待 publication。历史可见与写入就绪成为两个明确时间点，同时不引入 unpublished append state。
 
 ## 问题与方案对照
 
@@ -111,7 +111,7 @@ Handle 返回前，外部 caller 无法 append。因此 `append`、`flush` 与 `
 | Read-only caller 等待 encode 与 verify | Read open 返回 prepared events | 首屏只等待 Decode + migration |
 | 并发 historical open 重复工作 | Session/source-revision keyed single-flight | 每个 selected revision 只迁移一次 |
 | 第一个 caller 拥有共享取消 | Caller-local `waitWithAbort()` + backend controller | 单个取消不终止其他 waiter |
-| Query 与 resume 之间丢失 preparation | Bounded memo 中的 `PreparedStoredLog.publication` | Write open 复用相同 artifact |
+| Query 与 resume 之间丢失 preparation | Bounded weak memo 中的 `PreparedStoredLog.publication` | Write open 可复用仍可达的 artifact |
 | Read handle 没有 current path | Primed in-memory read | Publication 前 historical data 可读 |
 | Read handle 需要观察后续 append | 重新 resolve，并从 primed data 切到 current file | Publication 后已有 handle 收敛 |
 | Verify 前 append 不安全 | Write open 返回前完成 publication | 返回 writer 立即具备普通 durability |
@@ -153,7 +153,7 @@ Prepared artifact 与 Session restore 的 peak RSS 约为 1.03 GB。Preparation 
 
 Read-only body access 不发布 generation。第一个 writer 会在 append 前支付一次 publication。已配置的 JSONL root 仍必须可读且结构有效，但 historical body migration 本身不要求写 successor。
 
-Bounded memo 会保留一份 migrated event array，用于连接 read 与 write open。这是有意的取舍：不保留该 artifact 就必须重复 Decode 与 migration，或者无法提前提供 read。
+有界弱引用 memo 索引已迁移 artifact，以便在 read 与 write open 之间复用。[读取方保留](../bug-fix/2026-09-19-history-reader-retention.zh.md) 取代 memo 的强引用所有权：活动句柄与操作保留所需 artifact，回收后的后续 open 会重复 Decode 与迁移。
 
 Publication failure 会拒绝 Agent resume 和其他 write open，但不会使已经从 unchanged historical source 交付的 read result 失效。Source drift 对该 write attempt 是 terminal failure，不会触发 hidden state 重算。
 

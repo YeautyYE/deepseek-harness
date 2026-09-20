@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-20-nonactivating-history-follow.md
+2026-09-20-nonactivating-history-follow.md: b9ad9a990e636d42545951c0af277580c90f6e58
+2026-09-20-nonactivating-history-follow.zh.md: 36bc3e61735b11bd26931574bc405ee0fff3b11d

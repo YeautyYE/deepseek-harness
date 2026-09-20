@@ -819,6 +819,30 @@ describe('SessionObservationReader byte budget', () => {
     await ctx.fiber.dispose()
   })
 
+  it('counts reference slots when many content blocks share one payload', async () => {
+    const ctx = await readerContext()
+    try {
+      const meta = header('shared-slots')
+      const content = { type: 'text' as const, text: 'shared payload' }
+      const event: SessionEvent = {
+        type: 'user/message', seq: SessionSeq(0), time: 1, surfaceOp: 'append',
+        data: createUserMessage({ content: Array.from({ length: 4096 }, () => content), source: { kind: 'user' } }),
+      }
+      const counters = { stat: 0, open: 0, read: 0 }
+      ctx.provide('sessionPersistence', stubPersistence(new Map([
+        [meta.id, { header: meta, events: [event], revision: 'r1' }],
+      ]), counters))
+      const reader = new SessionObservationReader(ctx, 5, 8192)
+      for (let visit = 0; visit < 2; visit++) {
+        using observed = await reader.read(meta.id, { projectionMode: 'none' })
+        expect(observed.events[0]).toEqual(event)
+      }
+      expect(counters.read).toBe(2)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('reuses small logs and releases oversized logs after their final lease', async () => {
     const ctx = await readerContext()
     const small = header('small-log')

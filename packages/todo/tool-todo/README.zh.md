@@ -80,7 +80,8 @@ agent 每次更新都发送完整列表；新列表替换旧列表，因此没�
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | 插件入口：`Config` schema、工具注册、`todos` 投影单元 |
+| [`src/index.ts`](src/index.ts) | 插件入口：`Config` schema 与模型侧工具 |
+| [`src/projection.ts`](src/projection.ts) | 共享 `todos` 折叠与仅提供投影的 Host 插件 |
 | [`src/types.ts`](src/types.ts) | `todos` 投影键声明及其载荷类型的唯一归属地 |
 | [`src/client.ts`](src/client.ts) | 客户端命名空间对类型出口的再导出 |
 | [`src/invariant.ts`](src/invariant.ts) | 不变式伴生插件：校验持久整表快照与开放轮次归属 |
@@ -91,7 +92,7 @@ agent 每次更新都发送完整列表；新列表替换旧列表，因此没�
 
 ### 会话投影
 
-当组合挂载 `ctx.sessionProjections`（[`@deepseek-ai/dsh-session-projection`](../../session/session-projection/README.zh.md)）时，本包在注入的子插件中注册 `todos` 单元：投影即有效计划——最新的整份 `todo/write` 列表，首次写入前为 `null`，下一轮次开始时清空，而 `turn/end` 保留刚完成的清单。该键在此处合并进 `SessionProjectionMap`；载体通过历史尾页与 `session/projection` 推送帧提供该值。未挂载注册表的组合不受影响；单元注册见 [src/index.ts](src/index.ts)。
+工具要求 `ctx.sessionProjections` 并注册共享的 `todos` 折叠：最新整份 `todo/write` 列表，首次写入前或下一个 `turn/start` 后为 `null`；`turn/end` 保留已完成的清单。`@deepseek-ai/dsh-tool-todo/projection` 插件仅依赖该注册表，为冷历史提供相同状态，不注册 `todo_write` 或激活 Agent。Web 在 Host 挂载此投影入口，预设拥有工具。每个插件拥有一份注册；最后一个拥有者卸载后才移除该键。参见 [src/projection.ts](src/projection.ts)。
 
 ### 持久日志不变式
 

@@ -762,6 +762,14 @@ Host service backing the generated `ctx.remote.session` namespace.
 resolveAgent(sessionId: SessionId): Promise<ApiSessionAgentResult>
 
 /**
+ * Read a live or stored Session's effective command catalog without activating its Agent.
+ * @param sessionId - Session identity whose recorded preset selects the scoped commands.
+ * @param signal - caller cancellation for the observation and catalog publication.
+ * @returns immutable name-sorted descriptors after scoped shadowing.
+ */
+@Remote('commandCatalog') async commandCatalog(sessionId: SessionId, signal: AbortSignal): Promise<readonly CommandDescriptor[]>
+
+/**
  * Inspect one attached or persisted Session without activating its Agent.
  * @param sessionId - durable Session identity.
  * @param signal - optional caller cancellation for persistence reads.
@@ -894,7 +902,7 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote({ mode: 'stream' }) control(signal: AbortSignal): AsyncIterable<SessionControlFrame>
 ```
 
-Types: [SessionId](core.md) · [SessionInspection](persistence.md) · [SessionSearchRequest](session-query.md)
+Types: [CommandDescriptor](commands.md) · [SessionId](core.md) · [SessionInspection](persistence.md) · [SessionSearchRequest](session-query.md)
 
 Source: [`packages/api/session-controller/src/index.ts`](../../packages/api/session-controller/src/index.ts)
 

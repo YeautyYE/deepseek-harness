@@ -277,6 +277,25 @@ async function appendBatch(persistence: SessionPersistence, id: SessionId, event
   }
 }
 
+/** Cache-hit assertions retain values so GC scheduling cannot select a cache miss. */
+function retainMemoizedLogs(persistence: SessionPersistence): void {
+  const backend = persistence as unknown as { memoizeStoredLog(id: SessionId, value: object): void }
+  const memoize = backend.memoizeStoredLog.bind(backend)
+  const retained: object[] = []
+  vi.spyOn(backend, 'memoizeStoredLog').mockImplementation((id, value) => {
+    retained.push(value)
+    memoize(id, value)
+  })
+}
+
+/** Model a collected entry without making unit tests depend on the collector's schedule. */
+function expireMemoizedLog(persistence: SessionPersistence, id: SessionId): void {
+  const backend = persistence as unknown as { coldLogMemo: Map<SessionId, WeakRef<object>> }
+  const entry = backend.coldLogMemo.get(id)
+  expect(entry).toBeInstanceOf(WeakRef)
+  vi.spyOn(entry!, 'deref').mockReturnValue(undefined)
+}
+
 afterEach(async () => {
   const contexts = liveContexts.splice(0)
   const directories = dirs.splice(0)
@@ -1414,7 +1433,8 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
 
 
 
-  it('an unchanged cold log parses once across an observe-then-resume handoff', async () => {
+  it('an unchanged reachable cold log parses once across an observe-then-resume handoff', async () => {
+    retainMemoizedLogs(ctx.sessionPersistence)
     const m = meta('memo-handoff', '/work')
     await writeLog(ctx.sessionPersistence, m, oneTurnLog())
     const path = rawLogPath(root, '/work', m.id)
@@ -1441,6 +1461,7 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
   })
 
   it('a foreign write misses the memo through the revision guard', async () => {
+    retainMemoizedLogs(ctx.sessionPersistence)
     const m = meta('memo-foreign', '/work')
     await writeLog(ctx.sessionPersistence, m, oneTurnLog())
     const path = rawLogPath(root, '/work', m.id)
@@ -1463,6 +1484,7 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
   })
 
   it('the cold-log memo keeps only the handoff window and evicts the oldest id', async () => {
+    retainMemoizedLogs(ctx.sessionPersistence)
     const first = meta('memo-evict-a', '/work')
     const second = meta('memo-evict-b', '/work')
     const third = meta('memo-evict-c', '/work')
@@ -1476,6 +1498,52 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
     await readAll(ctx.sessionPersistence, first.id) // re-parses after eviction
     expect(readTally.bySuffix.get(rawLogPath(root, '/work', first.id))).toBe(2)
     expect(readTally.bySuffix.get(rawLogPath(root, '/work', third.id))).toBe(1)
+  })
+
+  it.each(['read', 'write'] as const)('reopens an unchanged current log after its memo is collected (%s)', async (access) => {
+    retainMemoizedLogs(ctx.sessionPersistence)
+    const m = meta('memo-collected-current', '/work')
+    await writeLog(ctx.sessionPersistence, m, oneTurnLog())
+    await readAll(ctx.sessionPersistence, m.id)
+    expireMemoizedLog(ctx.sessionPersistence, m.id)
+    readTally.enabled = true
+
+    await using handle = await ctx.sessionPersistence.open(m.id, access)
+    expect((await handle.read()).events).toEqual(oneTurnLog())
+    expect(readTally.bySuffix.get(rawLogPath(root, '/work', m.id))).toBe(1)
+  })
+
+  it('an open current reader reloads a collected memo without losing its observed prefix', async () => {
+    retainMemoizedLogs(ctx.sessionPersistence)
+    const m = meta('memo-collected-reader', '/work')
+    await writeLog(ctx.sessionPersistence, m, oneTurnLog())
+    await using reader = await ctx.sessionPersistence.open(m.id, 'read')
+    expect((await reader.read()).events).toEqual(oneTurnLog())
+    expireMemoizedLog(ctx.sessionPersistence, m.id)
+    readTally.enabled = true
+
+    expect((await reader.read(3)).events).toEqual(oneTurnLog().slice(3))
+    expect(readTally.bySuffix.get(rawLogPath(root, '/work', m.id))).toBe(1)
+  })
+
+  it.each(['read', 'write'] as const)('prepares unchanged history again after its memo is collected (%s)', async (access) => {
+    retainMemoizedLogs(ctx.sessionPersistence)
+    const m = meta('memo-collected-historical', '/work')
+    const path = historicalLogPath(root, m.cwd, m.id)
+    const source = [releasedV0Header(m), ...migrationOneTurnLog()].map(row => JSON.stringify(row)).join('\n') + '\n'
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, source)
+    expect((await readAll(ctx.sessionPersistence, m.id)).events).toEqual(migratedOneTurnLog())
+    expireMemoizedLog(ctx.sessionPersistence, m.id)
+    readTally.enabled = true
+
+    await using handle = await ctx.sessionPersistence.open(m.id, access)
+    expect((await handle.read()).events).toEqual(migratedOneTurnLog())
+    expect(readTally.bySuffix.get(path)).toBe(1)
+    expect(await readFile(path, 'utf8')).toBe(source)
+    const successor = rawLogPath(root, m.cwd, m.id)
+    if (access === 'read') await expect(stat(successor)).rejects.toMatchObject({ code: 'ENOENT' })
+    else expect((await stat(successor)).size).toBeGreaterThan(0)
   })
 
   it('a handle read retries once when the file revision changes during the read', async () => {

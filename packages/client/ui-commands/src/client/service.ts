@@ -7,8 +7,8 @@
  * lists the Add and Commands sections in usage order, a typed query ranks
  * every row by the `/` menu's shared name-and-label ranking (ui-primitives
  * `rankByName`). A host/contribution name collision fails loud. Every
- * execute addresses the session's agent by sessionId — sessions are always
- * agent-backed.
+ * execute addresses the Session's live Agent; catalog reads use its live or
+ * standing preset scope without Agent activation.
  */
 import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
@@ -65,7 +65,7 @@ interface LiveState {
 
 /** Command surface: session-keyed directory + '/' source + contribution registry + per-session popups. */
 export class CommandUiRuntime extends Service implements CommandUiContract {
-  static inject = ['inputTriggers', 'sessions', 'remote', 'remote.commands']
+  static inject = ['inputTriggers', 'sessions', 'remote', 'remote.commands', 'remote.session']
 
   private readonly directory: CommandDirectory
   private readonly live: LiveState = {
@@ -87,8 +87,8 @@ export class CommandUiRuntime extends Service implements CommandUiContract {
     this.t = locale.bind('command')
     this.directory = new CommandDirectory(async (sessionId) => {
       if (this.sessions().subagentAddress(sessionId) !== undefined) return []
-      const result = await ctx.remote.commands.list(sessionId)
-      if (!result.ok) throw new Error(`command.list failed: ${result.error.code}: ${result.error.message}`)
+      const result = await ctx.remote.session.commandCatalog(sessionId)
+      if (!result.ok) throw new Error(`command catalog failed: ${result.error.code}: ${result.error.message}`)
       return result.value
     })
     const inputTriggers = ctx.get('inputTriggers')
