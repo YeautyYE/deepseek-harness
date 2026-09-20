@@ -1,6 +1,6 @@
 /** Host registry and HTTP adapter for generic Connection RPC channels. */
 
-import { Context, Service } from '@deepseek-ai/cordis'
+import { Context, getTraceable, Service } from '@deepseek-ai/cordis'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import {
   RpcId,
@@ -58,6 +58,7 @@ declare module '@deepseek-ai/cordis' {
 
 /** Host Connection service whose channel registrations belong to the caller fiber. */
 export class HostConnectionService extends Service implements HostConnectionHandle {
+  private readonly channels = new Set<string>()
   private readonly interceptors = new Map<string, ConnectionRpcInterceptor>()
   private readonly fetchRoutes = new Map<string, RegisteredFetchRoute>()
 
@@ -77,7 +78,8 @@ export class HostConnectionService extends Service implements HostConnectionHand
 
   /** Generic channel registry scoped to the Context reading this service. */
   get rpc(): HostConnectionRpc {
-    const owner = this.ctx
+    // Carrier injections use the caller's dependencies, not Connection's service-origin shadow.
+    const owner = getTraceable(this.ctx, this.ctx)
     return {
       handle: (channel, handler) => this.register(owner, channel, handler),
       intercept: (channel, matches, handler) =>
@@ -175,10 +177,17 @@ export class HostConnectionService extends Service implements HostConnectionHand
         await bridge(req, res, fetchHandler)
       },
     }
-    return owner.effect(
-      () => owner.webServer.register(route),
-      `client-connection: ${channel} rpc channel`,
-    )
+    return owner.effect(() => {
+      if (this.channels.has(channel)) throw new Error(`connection: duplicate route ${channel}`)
+      this.channels.add(channel)
+      const carrier = owner.inject(['webServer'], (webCtx) => {
+        webCtx.effect(() => webCtx.webServer.register(route), `client-connection: ${channel} Web route`)
+      })
+      return async () => {
+        await carrier.dispose()
+        this.channels.delete(channel)
+      }
+    }, `client-connection: ${channel} rpc channel`)
   }
 
   private registerInterceptor(

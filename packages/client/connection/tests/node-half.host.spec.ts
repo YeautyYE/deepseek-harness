@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 import { createServer, request as httpRequest } from 'node:http'
 import { Readable } from 'node:stream'
 import { Context } from '@deepseek-ai/cordis'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { AddressInfo } from 'node:net'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
@@ -352,6 +352,7 @@ describe('connection node half', () => {
       calls.push({ endpoint, payload })
       return { ok: true, value: { accepted: true } }
     })
+    await vi.waitFor(() => { expect(routes.some(candidate => candidate.path === '/rpc')).toBe(true) })
     const route = routes.find(candidate => candidate.path === '/rpc')
     expect(route).toBeDefined()
 
@@ -481,6 +482,7 @@ describe('connection node half', () => {
       if (endpoint === 'fail') throw new Error('handler broke')
       return { ok: true, value: null }
     })
+    await vi.waitFor(() => { expect(routes.some(candidate => candidate.path === '/rpc')).toBe(true) })
     const route = routes.find(candidate => candidate.path === '/rpc')!
     const harnessHeaders = {
       host: 'harness.example',
