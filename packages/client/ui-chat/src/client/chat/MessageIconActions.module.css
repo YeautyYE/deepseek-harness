@@ -35,8 +35,8 @@
    devices without hover keep every row visible. */
 @media (hover: hover) {
   [data-actions-reveal='hover'] .actions,
-  :is([data-chat-flow-kind='user'], [data-chat-flow-kind='steering']):has(
-    ~ :is([data-chat-flow-kind='user'], [data-chat-flow-kind='steering'])
+  :nth-last-child(n + 2 of
+    [data-chat-flow-kind='user'], [data-chat-flow-kind='steering']
   ) .actions {
     opacity: 0;
     transition: opacity 80ms ease;
@@ -44,11 +44,11 @@
 
   [data-actions-reveal='hover']:hover .actions,
   [data-actions-reveal='hover']:focus-within .actions,
-  :is([data-chat-flow-kind='user'], [data-chat-flow-kind='steering']):has(
-    ~ :is([data-chat-flow-kind='user'], [data-chat-flow-kind='steering'])
+  :nth-last-child(n + 2 of
+    [data-chat-flow-kind='user'], [data-chat-flow-kind='steering']
   ):hover .actions,
-  :is([data-chat-flow-kind='user'], [data-chat-flow-kind='steering']):has(
-    ~ :is([data-chat-flow-kind='user'], [data-chat-flow-kind='steering'])
+  :nth-last-child(n + 2 of
+    [data-chat-flow-kind='user'], [data-chat-flow-kind='steering']
   ):focus-within .actions {
     opacity: 1;
   }

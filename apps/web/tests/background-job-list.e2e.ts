@@ -26,22 +26,6 @@ const SEED_ID = 'background-job-list-web-e2e'
 // their own; the test kills it explicitly to reach the settled state.
 const COMMAND = 'sleep 45'
 
-/**
- * Wait for opening a session to publish its live Agent.
- * @param scaffold - the booted web scaffold.
- * @param sessionId - the opened session's identity.
- * @returns the registered Agent instance.
- */
-async function liveAgent(scaffold: WebScaffold, sessionId: SessionId): Promise<Agent> {
-  const deadline = Date.now() + 30_000
-  for (;;) {
-    const found = scaffold.ctx.agents.get(sessionId)
-    if (found !== undefined) return found
-    if (Date.now() > deadline) throw new Error(`opening session "${sessionId}" published no live Agent`)
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-}
-
 describe.skipIf(MODE === 'record')('web e2e: background job list', () => {
   let scaffold: WebScaffold
   let browser: Browser
@@ -66,10 +50,9 @@ describe.skipIf(MODE === 'record')('web e2e: background job list', () => {
     await sessionRow.waitFor({ timeout: 10_000 })
     await sessionRow.click()
 
-    // Opening the session drives the Host's ordinary Agent resolution; the
-    // job owner must be that exact live instance, never a second one.
-    // `expect.poll` is test-scoped, so this hook polls by hand.
-    agent = await liveAgent(scaffold, SessionId(SEED_ID))
+    const resolved = await scaffold.ctx.sessionController.resolveAgent(SessionId(SEED_ID))
+    if ('error' in resolved) throw resolved.error
+    agent = resolved.agent
   }, 120_000)
 
   afterAll(async () => {

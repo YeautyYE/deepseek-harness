@@ -171,14 +171,51 @@ describe('web e2e: long Chat interaction contract', () => {
     if (failures.length > 1) throw new AggregateError(failures, 'long Chat interaction cleanup failed')
   })
 
+  it('reveals mixed user and steering actions by recency, hover, focus and pointer capability', async () => {
+    const styles = await page.locator('style[data-plugin-css$="/MessageIconActions.module.css"]').textContent()
+    if (styles === null) throw new Error('message actions stylesheet is absent')
+    const classes = await page.locator('[data-chat-flow-kind="user"]')
+      .last().getByRole('button', { name: 'Copy', exact: true })
+      .evaluate(button => button.parentElement!.className)
+    for (const hasTouch of [false, true]) {
+      const context = await browser.newContext({ hasTouch })
+      try {
+        const probe = await context.newPage()
+        await probe.setContent('<main><div data-chat-flow-kind="user"><div><button>first</button></div></div><div data-chat-flow-kind="assistant-step">answer</div><div data-chat-flow-kind="steering"><div><button>second</button></div></div><div data-chat-flow-kind="user"><div><button>latest</button></div></div></main>')
+        await probe.locator('button').evaluateAll((buttons, className) => {
+          for (const button of buttons) button.parentElement!.className = className
+        }, classes)
+        await probe.addStyleTag({ content: styles })
+        expect(await probe.evaluate(() => matchMedia('(hover: hover)').matches)).toBe(!hasTouch)
+        const opacity = (name: string) => probe.getByRole('button', { name, exact: true })
+          .evaluate(button => getComputedStyle(button.parentElement!).opacity)
+        await expect.poll(() => opacity('first')).toBe(hasTouch ? '1' : '0')
+        await expect.poll(() => opacity('second')).toBe(hasTouch ? '1' : '0')
+        expect(await opacity('latest')).toBe('1')
+        if (!hasTouch) {
+          await probe.getByRole('button', { name: 'second', exact: true }).hover()
+          await expect.poll(() => opacity('second')).toBe('1')
+          await probe.mouse.move(0, 0)
+          await expect.poll(() => opacity('second')).toBe('0')
+          await probe.getByRole('button', { name: 'first', exact: true }).focus()
+          await expect.poll(() => opacity('first')).toBe('1')
+        }
+        await probe.getByRole('button', { name: 'latest', exact: true })
+          .evaluate((button) => { button.parentElement!.parentElement!.remove() })
+        await expect.poll(() => opacity('second')).toBe('1')
+      } finally {
+        await context.close()
+      }
+    }
+  })
+
   it.skipIf(MODE === 'record')('keeps heterogeneous rows and their actions bound to exact semantic identities', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-chat-long-interactions'))
-    await expect.poll(
-      () => scaffold.ctx.agents.get(SessionId(SESSION_ID)) !== undefined,
-      { timeout: 10_000 },
-    ).toBe(true)
-    const source = scaffold.ctx.agents.get(SessionId(SESSION_ID))
-    if (source === undefined) throw new Error('seeded long-history agent is not attached')
+    expect(scaffold.ctx.agents.get(SessionId(SESSION_ID))).toBeUndefined()
+    expect(scaffold.ctx.sessions.get(SessionId(SESSION_ID))).toBeUndefined()
+    const activated = await scaffold.ctx.sessionController.resolveAgent(SessionId(SESSION_ID))
+    if ('error' in activated) throw activated.error
+    const source = activated.agent
 
     const toolUserMarker = FIXTURE.markers.user(TOOL_TURN)
     const toolAssistantMarker = FIXTURE.markers.assistant(TOOL_TURN)
@@ -299,6 +336,18 @@ describe('web e2e: long Chat interaction contract', () => {
     const turnTailRow = page.locator(`[data-chat-anchor-key="${turnTailKey(BRANCH_TURN)}"]`)
     expect(await userRow.textContent()).toContain(branchUserMarker)
     expect(await assistantRow.textContent()).toContain(branchAssistantMarker)
+    const copy = userRow.getByRole('button', { name: 'Copy', exact: true })
+    const actionsOpacity = () => copy.evaluate(button => getComputedStyle(button.parentElement!).opacity)
+    await page.mouse.move(0, 0)
+    await expect.poll(actionsOpacity).toBe('0')
+    await userRow.hover()
+    await expect.poll(actionsOpacity).toBe('1')
+    await page.mouse.move(0, 0)
+    await expect.poll(actionsOpacity).toBe('0')
+    await copy.focus()
+    await expect.poll(actionsOpacity).toBe('1')
+    const newestCopy = toolUserRow.getByRole('button', { name: 'Copy', exact: true })
+    expect(await newestCopy.evaluate(button => getComputedStyle(button.parentElement!).opacity)).toBe('1')
     await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
     await userRow.hover()
     await userRow.getByRole('button', { name: 'Copy', exact: true }).click()

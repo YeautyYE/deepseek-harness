@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
-import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
+import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import { composeEntries, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
 import { ToolCallId, createUserMessage, LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -217,17 +217,6 @@ async function waitForReply(
 /** Resolve the semantic assistant-step key owned by the conversation assembler. */
 function assistantKey(event: SessionEvent<'assistant/message'>): string {
   return conversationContextKey('assistant-step', `${String(event.data.turn)}:${String(event.data.step)}`)
-}
-
-/** Wait until opening a persisted Session publishes its live Agent. */
-async function liveAgent(scaffold: WebScaffold, sessionId: SessionId): Promise<Agent> {
-  const deadline = Date.now() + 30_000
-  for (;;) {
-    const found = scaffold.ctx.agents.get(sessionId)
-    if (found !== undefined) return found
-    if (Date.now() >= deadline) throw new Error(`opening session "${sessionId}" published no live Agent`)
-    await new Promise<void>(resolve => setTimeout(resolve, 100))
-  }
 }
 
 /** Expand the first Workspace row and open the named Session. */
@@ -704,7 +693,9 @@ describe.skipIf(MODE === 'record')('web e2e: active Schedule catalog', () => {
     expect(await catalogRow.getByRole('img', { name: ACTIVE_SCHEDULE_LABEL }).count()).toBe(1)
 
     await openSession(page, CATALOG_TITLE)
-    const parentAgent = await liveAgent(scaffold, CATALOG_SESSION_ID)
+    const resolved = await scaffold.ctx.sessionController.resolveAgent(CATALOG_SESSION_ID)
+    if ('error' in resolved) throw resolved.error
+    const parentAgent = resolved.agent
 
     const trigger = page.getByRole('button', { name: '3 reminders' })
     await trigger.waitFor({ timeout: 15_000 })

@@ -123,9 +123,9 @@ describe('web e2e: durable per-message feedback', () => {
     await expect.poll(() => restored.getAttribute('aria-pressed'), { timeout: 15_000 }).toBe('true')
     // The retract label sits on the Dislike side: the Like stays unpressed.
     await expect.poll(() => cold.getAttribute('aria-pressed'), { timeout: 10_000 }).toBe('false')
-    const agent = scaffold.ctx.agents.get(SessionId(SEED_ID))
-    if (agent === undefined) throw new Error('seeded session did not attach an agent')
-    const puts = agent.session.snapshotEvents().filter(event => event.type === 'feedback/message-put')
+    expect(scaffold.ctx.agents.get(SessionId(SEED_ID)) === undefined).toBe(true)
+    const observed = await scaffold.ctx.sessionController.inspect(SessionId(SEED_ID))
+    const puts = observed.events.filter(event => event.type === 'feedback/message-put')
     expect(puts.map(event => event.type === 'feedback/message-put' ? event.data.item : undefined)).toMatchObject([
       { rating: 'positive', note: POSITIVE_NOTE, category: 'service-stability' },
       { rating: 'negative', note: NOTE, category: 'task-result' },
@@ -137,7 +137,7 @@ describe('web e2e: durable per-message feedback', () => {
       () => page.getByRole('button', { name: 'Bad response' }).first().getAttribute('aria-pressed'),
       { timeout: 10_000 },
     ).toBe('false')
-    const last = agent.session.snapshotEvents().at(-1)
+    const last = (await scaffold.ctx.sessionController.inspect(SessionId(SEED_ID))).events.at(-1)
     expect(last?.type).toBe('feedback/message-delete')
   }, 90_000)
 

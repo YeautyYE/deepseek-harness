@@ -148,10 +148,10 @@ describe('chat flow font-size axis', () => {
     expect(css).not.toContain("[data-actions-reveal='always']")
   })
 
-  it('uses flow sibling selectors to reveal only the latest user-authored row', () => {
+  it('selects all but the latest user-authored sibling for hover reveal', () => {
     const css = read('MessageIconActions.module.css')
-    const userKinds = ":is([data-chat-flow-kind='user'], [data-chat-flow-kind='steering'])"
-    expect(css).toContain(`${userKinds}:has(\n    ~ ${userKinds}\n  ) .actions`)
+    const userKinds = "[data-chat-flow-kind='user'], [data-chat-flow-kind='steering']"
+    expect(css).toContain(`:nth-last-child(n + 2 of\n    ${userKinds}\n  ) .actions`)
     expect(css).toContain('):hover .actions')
     expect(css).toContain('):focus-within .actions')
   })

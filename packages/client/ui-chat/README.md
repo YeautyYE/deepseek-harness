@@ -50,6 +50,8 @@ After Assistant replies settle, the completed-turn timing dialog omits TTFT and 
 
 The completed-turn action footer starts 20px below the preceding prose or extension content.
 
+On hover-capable devices, earlier user and steering message actions appear on hover or keyboard focus, while the newest input keeps its actions visible. CSS selects earlier inputs by filtered sibling position rather than scanning all later messages for each row; touch-only devices keep every action row visible.
+
 -----
 
 <a id="turn-process-folding"></a>
@@ -85,6 +87,7 @@ None; Chat presentation does not assemble or mutate provider requests.
 
 - **The transcript reflects the loaded Session window** — older transcript nodes become available only after Session Controller loads the preceding event page. Turn navigation is wider than the window: the rail merges the loaded Turns with the host `turnOutline` projection, so every started Turn gets a fixed-pitch mark (10px apart; a ladder taller than the frame scrolls inside it with gradient fades), and activating an unloaded mark pages history through the Turn's `turn/start` seq before landing on its row. Without the projection (assemblies not mounting `dsh-session-turn-outline`) the rail falls back to loaded Turns only.
 - **Rail previews are card-sized** — one prompt line (50 characters) and up to three response lines (120), on loaded and unloaded Turns alike; an unloaded Turn's response arrives from the outline only once the Turn settled, so an open Turn previews its prompt (or just the Turn number) until then.
+- **Loaded Chat rows stay mounted** — explicitly paging through a large history increases DOM size and remount cost; source-cache collection does not virtualize the transcript.
 
 
 <a id="dev-note"></a>
