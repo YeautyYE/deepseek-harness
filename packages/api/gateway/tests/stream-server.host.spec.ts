@@ -1,5 +1,6 @@
 import { once } from 'node:events'
-import { createServer, type Server } from 'node:http'
+import { createServer, type IncomingMessage, type Server } from 'node:http'
+import type { Socket } from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import WebSocket from 'ws'
 import {
@@ -15,8 +16,16 @@ interface RunningMux {
 }
 
 const running = new Set<RunningMux>()
+const clients = new Set<WebSocket>()
 
 afterEach(async () => {
+  await Promise.all([...clients].map(async (socket) => {
+    clients.delete(socket)
+    if (socket.readyState === WebSocket.CLOSED) return
+    const closed = once(socket, 'close')
+    socket.terminate()
+    await closed
+  }))
   await Promise.all([...running].map(async (entry) => {
     running.delete(entry)
     await entry.mux.close().catch(() => undefined)
@@ -25,6 +34,69 @@ afterEach(async () => {
 })
 
 describe('Remote stream mux server carrier lifecycle', () => {
+  it('compresses a tool-heavy history snapshot without changing its JSON', async () => {
+    const value = historySnapshot()
+    const entry = await startMux(async () => oneItem(value), 60_000)
+    const client = new WebSocket(entry.url)
+    clients.add(client)
+    const upgrade = once(client, 'upgrade')
+    await once(client, 'open')
+    const [response] = await upgrade as [IncomingMessage]
+    expect(response.headers['sec-websocket-extensions']).toBe(
+      'permessage-deflate; server_no_context_takeover; client_no_context_takeover',
+    )
+    const carrier = (client as unknown as { _socket: Socket })._socket
+    const before = carrier.bytesRead
+    const received = receiveFrames(client)
+    client.send(openFrame('history'))
+    const frames = await received
+    const jsonBytes = Buffer.byteLength(JSON.stringify({ type: 'item', streamId: 'history', value }))
+    const wireBytes = carrier.bytesRead - before
+
+    expect(frames).toEqual([
+      { type: 'item', streamId: 'history', value },
+      { type: 'end', streamId: 'history' },
+    ])
+    expect(jsonBytes).toBeGreaterThan(1_000_000)
+    expect(wireBytes).toBeLessThan(jsonBytes / 2)
+  })
+
+  it.each([
+    { serverCompression: false, clientCompression: true },
+    { serverCompression: true, clientCompression: false },
+  ])('preserves history when compression is not negotiated: %j', async ({ serverCompression, clientCompression }) => {
+    const value = historySnapshot()
+    const entry = await startMux(async () => oneItem(value), 60_000, serverCompression)
+    const client = await connect(entry.url, true, clientCompression)
+    expect(client.extensions).toBe('')
+    const carrier = (client as unknown as { _socket: Socket })._socket
+    const before = carrier.bytesRead
+    const received = receiveFrames(client)
+    client.send(openFrame('history'))
+    expect(await received).toEqual([
+      { type: 'item', streamId: 'history', value },
+      { type: 'end', streamId: 'history' },
+    ])
+    expect(carrier.bytesRead - before).toBeGreaterThan(Buffer.byteLength(JSON.stringify(value)))
+  })
+
+  it('leaves small application frames uncompressed on a compressed socket', async () => {
+    const entry = await startMux(async () => oneItem('ready'), 60_000)
+    const client = await connect(entry.url)
+    expect(client.extensions).toBe('permessage-deflate')
+    const carrier = (client as unknown as { _socket: Socket })._socket
+    const before = carrier.bytesRead
+    const received = receiveFrames(client)
+    client.send(openFrame('small'))
+    const frames = await received
+    expect(frames).toEqual([
+      { type: 'item', streamId: 'small', value: 'ready' },
+      { type: 'end', streamId: 'small' },
+    ])
+    const frameBytes = frames.reduce<number>((sum, frame) => sum + Buffer.byteLength(JSON.stringify(frame)) + 2, 0)
+    expect(carrier.bytesRead - before).toBe(frameBytes)
+  })
+
   it('sends WebSocket Ping control frames without application messages', async () => {
     const entry = await startMux(async (_endpoint, _payload, signal) => waitForAbort(signal), 20)
     const client = await connect(entry.url)
@@ -234,8 +306,8 @@ const mapFailure: RemoteStreamFailureMapper = error => ({
   details: {},
 })
 
-async function startMux(open: RemoteStreamOpener, heartbeatIntervalMs = 2_000): Promise<RunningMux> {
-  const mux = new RemoteStreamMuxServer(open, mapFailure, heartbeatIntervalMs)
+async function startMux(open: RemoteStreamOpener, heartbeatIntervalMs = 2_000, websocketCompression = true): Promise<RunningMux> {
+  const mux = new RemoteStreamMuxServer(open, mapFailure, heartbeatIntervalMs, websocketCompression)
   const http = createServer()
   http.on('upgrade', (request, socket, head) => { mux.handleUpgrade(request, socket, head) })
   await new Promise<void>((resolve, reject) => {
@@ -252,8 +324,9 @@ async function startMux(open: RemoteStreamOpener, heartbeatIntervalMs = 2_000): 
   return entry
 }
 
-async function connect(url: string, autoPong = true): Promise<WebSocket> {
-  const socket = new WebSocket(url, { autoPong })
+async function connect(url: string, autoPong = true, perMessageDeflate = true): Promise<WebSocket> {
+  const socket = new WebSocket(url, { autoPong, perMessageDeflate })
+  clients.add(socket)
   await once(socket, 'open')
   return socket
 }
@@ -267,6 +340,64 @@ function acceptedSocket(mux: RemoteStreamMuxServer): WebSocket {
 
 function openFrame(streamId: string): string {
   return JSON.stringify({ type: 'open', streamId, endpoint: 'fixture/follow', payload: {} })
+}
+
+function historySnapshot(): unknown {
+  const words = 'fixture history browser request response stream plugin configuration result value message cursor sequence rendering memory token compact source timing output tool arguments schema description parameter context runtime storage page session'.split(' ')
+  let seed = 0x73a5f491
+  const prose = (count: number): string => Array.from({ length: count }, () => {
+    seed = (Math.imul(seed, 1_664_525) + 1_013_904_223) >>> 0
+    return words[(seed >>> 16) % words.length]
+  }).join(' ')
+  const tools = Array.from({ length: 12 }, (_, index) => ({
+    name: `fixture_tool_${String(index)}`,
+    description: prose(60),
+    parameters: { type: 'object', properties: { input: { type: 'string', description: prose(40) } } },
+  }))
+  const events = Array.from({ length: 50 }, (_, turn) => [
+    { type: 'request/header', turn, system: prose(120), tools },
+    { type: 'assistant/message', turn, stream: Array.from({ length: 160 }, (_, time) => [time * 10, prose(5)]) },
+    { type: 'tool/call', turn, name: `fixture_tool_${String(turn % tools.length)}`, arguments: { input: prose(60) } },
+    { type: 'tool/result', turn, result: Array.from({ length: 35 }, (_, row) => ({ row, content: prose(30) })) },
+    { type: 'assistant/message', turn, content: prose(140) },
+  ]).flat()
+  return { type: 'snapshot', cursor: 18_000, events }
+}
+
+async function *oneItem(value: unknown): AsyncIterable<unknown> {
+  yield value
+}
+
+function receiveFrames(socket: WebSocket): Promise<unknown[]> {
+  return new Promise((resolve, reject) => {
+    const frames: unknown[] = []
+    const cleanup = (): void => {
+      socket.off('error', onError)
+      socket.off('close', onClose)
+      socket.off('message', onMessage)
+    }
+    const onError = (error: Error): void => {
+      cleanup()
+      reject(error)
+    }
+    const onClose = (): void => { onError(new Error('fixture stream closed before its end frame')) }
+    const onMessage = (data: WebSocket.RawData): void => {
+      try {
+        if (!Buffer.isBuffer(data)) throw new TypeError('fixture expected a Buffer frame')
+        const frame = JSON.parse(data.toString('utf8')) as { type: string }
+        frames.push(frame)
+        if (frame.type !== 'end') return
+        cleanup()
+        resolve(frames)
+      } catch (error) {
+        cleanup()
+        reject(new Error('fixture stream message was invalid', { cause: error }))
+      }
+    }
+    socket.once('error', onError)
+    socket.once('close', onClose)
+    socket.on('message', onMessage)
+  })
 }
 
 async function *waitForAbort(signal: AbortSignal): AsyncIterable<never> {

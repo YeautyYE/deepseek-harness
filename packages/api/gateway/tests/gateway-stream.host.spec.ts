@@ -219,12 +219,25 @@ afterEach(async () => {
 
 describe('Typert Remote streams', () => {
   it('validates the WebSocket heartbeat timer range', () => {
-    expect(TypertGatewayService.Config({})).toEqual({ websocketHeartbeatIntervalMs: 2_000 })
+    expect(TypertGatewayService.Config({})).toEqual({ websocketHeartbeatIntervalMs: 2_000, websocketCompression: true })
     expect(TypertGatewayService.Config({ websocketHeartbeatIntervalMs: MAX_TIMER_DELAY_MS }))
-      .toEqual({ websocketHeartbeatIntervalMs: MAX_TIMER_DELAY_MS })
+      .toEqual({ websocketHeartbeatIntervalMs: MAX_TIMER_DELAY_MS, websocketCompression: true })
     for (const websocketHeartbeatIntervalMs of [0, 1.5, MAX_TIMER_DELAY_MS + 1]) {
       expect(() => TypertGatewayService.Config({ websocketHeartbeatIntervalMs })).toThrow()
     }
+    expect(() => TypertGatewayService.Config({ websocketCompression: 'enabled' } as unknown as GatewayConfig)).toThrow()
+  })
+
+  it.each([true, false])('applies websocketCompression=%s to the carrier', async (websocketCompression) => {
+    const { ctx } = await setup(true, { websocketCompression })
+    const socket = new WebSocket(`ws://127.0.0.1:${String(ctx.webServer.port)}/api/remote.mux`, {
+      headers: { cookie: browserCookie(ctx) },
+    })
+    await once(socket, 'open')
+    expect(socket.extensions).toBe(websocketCompression ? 'permessage-deflate' : '')
+    const closed = once(socket, 'close')
+    socket.close()
+    await closed
   })
 
   it('opens decoded carrier payloads through the in-process wire adapter', async () => {

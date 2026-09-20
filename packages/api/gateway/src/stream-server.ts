@@ -23,7 +23,7 @@ const MAX_MISSED_HEARTBEATS = 2
 
 /** Own the no-server WebSocket acceptor and every active logical stream. */
 export class RemoteStreamMuxServer {
-  private readonly server = new WebSocketServer({ noServer: true })
+  private readonly server: WebSocketServer
   private readonly connections = new Set<Promise<void>>()
   private readonly missedHeartbeats = new WeakMap<WebSocket, number>()
   private heartbeatTimer: NodeJS.Timeout | undefined
@@ -32,12 +32,22 @@ export class RemoteStreamMuxServer {
    * @param open - Gateway stream dispatcher.
    * @param failure - Gateway error-to-wire mapper.
    * @param heartbeatIntervalMs - interval between WebSocket Ping control frames.
+   * @param websocketCompression - negotiate per-message compression without reusing dictionaries between messages.
    */
   constructor(
     private readonly open: RemoteStreamOpener,
     private readonly failure: RemoteStreamFailureMapper,
     private readonly heartbeatIntervalMs: number,
-  ) {}
+    websocketCompression: boolean,
+  ) {
+    this.server = new WebSocketServer({
+      noServer: true,
+      perMessageDeflate: websocketCompression && {
+        serverNoContextTakeover: true,
+        clientNoContextTakeover: true,
+      },
+    })
+  }
 
   /**
    * Upgrade one trusted request and begin serving its logical streams.
