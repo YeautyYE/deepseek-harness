@@ -489,6 +489,7 @@ describe('released event and payload inventory', () => {
       { type: 'reasoning-delta', index: 0, text: 'r' },
       { type: 'tool-call-delta', index: 0, id: 'call', name: 'read', argumentsDelta: '{}' },
       { type: 'tool-call-delta', index: 0, id: 'call', argumentsDelta: '{}' },
+      { type: 'tool-call-delta', index: 0, id: '', name: '', argumentsDelta: '{}' },
       { type: 'block-end', index: 0, block: textBlock },
       { type: 'usage', usage: {
         inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0,

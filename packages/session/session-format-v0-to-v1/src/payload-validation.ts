@@ -250,8 +250,8 @@ export function assertReleasedPayloadSemantics(event: SessionFormatEvent, versio
       return
     case 'tool/call':
       coordinatePair(data, label)
-      nonEmptyString(data['callId'], `${label} callId`)
-      nonEmptyString(data['name'], `${label} name`)
+      releasedToolCallId(data['callId'], `${label} callId`, version)
+      stringValue(data['name'], `${label} name`)
       stringValue(data['arguments'], `${label} arguments`)
       return
     case 'tool/code-dispatch':
@@ -422,6 +422,11 @@ function tokenUsageValue(value: SessionFormatJsonValue | undefined, label: strin
   for (const key of Object.keys(usage)) countValue(usage[key], `${label} ${key}`)
 }
 
+function releasedToolCallId(value: SessionFormatJsonValue | undefined, label: string, version: number): void {
+  if (version < 2) stringValue(value, label)
+  else nonEmptyString(value, label)
+}
+
 function contentBlocksValue(value: SessionFormatJsonValue | undefined, label: string, version: number): void {
   arrayValue(value, label, (member, memberLabel) => {
     contentBlockValue(member, memberLabel, version)
@@ -442,13 +447,13 @@ function contentBlockValue(value: SessionFormatJsonValue, label: string, version
       return
     case 'tool-call':
       assertReleasedV0Keys(block, ['type', 'id', 'name', 'arguments'], [], label)
-      nonEmptyString(block['id'], `${label} id`)
-      nonEmptyString(block['name'], `${label} name`)
+      releasedToolCallId(block['id'], `${label} id`, version)
+      stringValue(block['name'], `${label} name`)
       stringValue(block['arguments'], `${label} arguments`)
       return
     case 'tool-result':
       assertReleasedV0Keys(block, ['type', 'toolCallId', 'content'], ['isError'], label)
-      nonEmptyString(block['toolCallId'], `${label} toolCallId`)
+      releasedToolCallId(block['toolCallId'], `${label} toolCallId`, version)
       contentBlocksValue(block['content'], `${label} content`, version)
       if (block['isError'] !== undefined) booleanValue(block['isError'], `${label} isError`)
       return
@@ -561,7 +566,7 @@ function messageSourceValue(
       return
     case 'tool':
       assertReleasedV0Keys(source, ['kind', 'callId'], [], label)
-      nonEmptyString(source['callId'], `${label} callId`)
+      releasedToolCallId(source['callId'], `${label} callId`, version)
       return
     case 'agent-instructions':
       assertReleasedV0Keys(source, ['kind', 'form', 'changes'], ['baseline', 'baselineIdentity'], label)
@@ -726,7 +731,7 @@ function streamChunkValue(value: SessionFormatJsonValue | undefined, label: stri
     case 'tool-call-delta':
       assertReleasedV0Keys(chunk, ['type', 'index', 'id', 'argumentsDelta'], ['name'], label)
       countValue(chunk['index'], `${label} index`)
-      nonEmptyString(chunk['id'], `${label} id`)
+      stringValue(chunk['id'], `${label} id`)
       if (chunk['name'] !== undefined) stringValue(chunk['name'], `${label} name`)
       stringValue(chunk['argumentsDelta'], `${label} argumentsDelta`)
       return

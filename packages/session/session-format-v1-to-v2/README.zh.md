@@ -43,7 +43,7 @@ const eventRecord = releasedV2SessionFormatCodec.encodeEvent(currentEvent)
 
 `releasedV1SessionFormatCodec` 逐行读取冻结的 v1 物理语言。`sessionFormatV1ToV2` 创建改变事件基数的 Stage，静态 catalog 把它连接到 decoder，且不保留 v1 事件数组。Catalog 会重映射已声明引用，并校验 released-v2 envelope、inherited cut、事件准入与关系。持久化在发布前通过 Worker 执行完整 installed-current 校验。`releasedV2SessionFormatCodec` 创建已发布 v2 格式的逐行 decoder，并逐条编码 v2 header 与事件。
 
-成功的 v1 `assistant/message` 必须引用其完整有序 attempt。迁移会移除这些顶层 chunk 和已停用的 message chunk reference，在不合并 token 边界的前提下压缩 chunk，并把 stream 存到该 message 上。未被 message 认领的 attempt 会在其最后一个 chunk 的位置变成一个仅日志可见的 `assistant/attempt`。无关的交错事件保持相对顺序。
+成功的 v1 `assistant/message` 必须引用其完整有序 attempt。迁移会移除这些顶层 chunk 和已停用的 message chunk reference，在不合并 token 边界的前提下压缩 chunk，并把 stream 存到该 message 上。未被 message 认领的 attempt 会在其最后一个 chunk 的位置变成一个仅日志可见的 `assistant/attempt`。无关的交错事件保持相对顺序。已发布格式中标识或名称为空的打包 Tool-call run 转为标量 stream chunk，保留每个参数片段和时间戳；当前紧凑 run 继续遵守字段非空规则。已提交的空 id 调用根据 turn、step、message 序号和 content 索引生成标识，并同步用于 stream、message、调用和结果。迁移要求存在唯一匹配的 stream block-end，以及同一 step 中完整配对的调用和结果；并发空 id 的归属存在歧义，迁移会拒绝。空名称保留已记录的 unknown-tool 结果，前代文件保持原样。
 
 该 edge 还会闭合一种有限的旧版恢复模式：非空的 `next-turn` inbox 插入后直接出现下一个 `turn/start`，但缺少前一轮的 `turn/end`；迁移将前一轮记录为 interrupted。旧版 round-zero goal mutation 会变成一个 `goal/change`，随后保留原本模型可见的 message 并改用普通 plugin attribution，因此持久 goal 状态与历史模型输入都会保留。
 

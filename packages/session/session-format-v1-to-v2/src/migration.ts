@@ -22,6 +22,7 @@ import {
   isReleasedAssistantChunkRun,
 } from '@deepseek-ai/dsh-session-format-v0-to-v1'
 import { assertReleasedV2Header } from './validation.ts'
+import { ReleasedEmptyToolCallRepair } from './empty-tool-call.ts'
 
 const CHUNK_EVENT_REQUIRED = ['type', 'seq', 'time', 'data'] as const
 const CHUNK_EVENT_OPTIONAL = ['ignorable', 'sourceEventSeqs', 'surfaceOp'] as const
@@ -66,6 +67,7 @@ class TransformedReleasedV1ToV2Stage implements SessionFormatMigrationStage {
       sourceCut: sessionFormatCount(input.sourceInheritedEventCount, 'format v1 inherited event count'),
       mapping: new Map(),
       legacyTurns: legacyTurnState(),
+      emptyToolCall: new ReleasedEmptyToolCallRepair(),
       pending: undefined,
       targetSeq: 0,
       targetCut: input.sourceHeader.isSeeded ? undefined : 0,
@@ -115,6 +117,7 @@ interface ReleasedV1ToV2State {
   readonly sourceCut: number
   readonly mapping: Map<number, number>
   readonly legacyTurns: LegacyTurnState
+  readonly emptyToolCall: ReleasedEmptyToolCallRepair
   pending: StreamingAttempt | undefined
   targetSeq: number
   targetCut: number | undefined
@@ -191,7 +194,11 @@ function transformReleasedRun(
   run: SessionFormatEventRun,
   context: SessionFormatMigrationContext,
 ): void {
-  if (!isReleasedAssistantChunkRun(run)) {
+  // Released writers packed partial Tool calls whose id or name was still empty.
+  // Current streams preserve these deltas as scalar chunks through the accumulator.
+  if (!isReleasedAssistantChunkRun(run)
+    || (run.stream['type'] === 'tool-call-chunks'
+      && (run.stream['id'] === '' || run.stream['name'] === ''))) {
     for (const event of run.expand()) transformReleasedEvent(state, event, context)
     return
   }
@@ -221,6 +228,7 @@ function finishMigration(
   context: SessionFormatMigrationContext,
 ): number {
   finishAttempt(state, context)
+  state.emptyToolCall.finish()
   if (state.sourceHeader.isSeeded && state.targetCut === undefined) {
     state.targetCut = state.targetSeq
     context.emitEvent({
@@ -325,7 +333,7 @@ function emitSource(
   event: SessionFormatEvent,
   context: SessionFormatMigrationContext,
 ): void {
-  let source = event
+  let source = state.emptyToolCall.transform(event)
   if (state.sourceHeader.isSeeded
     && event.seq === state.sourceCut
     && event.type === 'session/end-seed') {
