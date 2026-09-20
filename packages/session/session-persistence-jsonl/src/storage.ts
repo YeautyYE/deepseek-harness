@@ -72,8 +72,11 @@ export interface StorageHandleState {
   recoveredTail?: SessionEvent[] | undefined
   /** Exact fork-inherited prefix length stored with the log; `0` when unseeded. */
   inheritedEventCount: SessionLogOffset
-  /** The validated stored prefix from a write open, served to reads until the first append. */
-  primed?: SessionHandleReadResult | undefined
+  /**
+   * Validated open result, held until the first current read settles or a write
+   * commits. Prepared readers retain it until a current generation appears.
+   */
+  primed?: (SessionHandleReadResult & { readonly status: 'current' | 'prepared' }) | undefined
 }
 
 /**
@@ -132,12 +135,22 @@ export class JsonlSessionHandle implements SessionHandle {
       if (this.access === 'write') {
         result = this.readPrimed(primed, offset, length)
       } else {
-        const currentPath = await this.storage.resolveCurrentLog(this.id, options?.signal)
-        if (currentPath === undefined) {
-          result = this.readPrimed(primed, offset, length)
-        } else {
-          this.state.primed = undefined
-          result = await this.readCurrent(currentPath, offset, length, options?.signal)
+        let currentPath: string | undefined
+        try {
+          currentPath = await this.storage.resolveCurrentLog(this.id, options?.signal)
+          if (currentPath !== undefined) {
+            result = await this.readCurrent(currentPath, offset, length, options?.signal)
+          } else if (primed.status === 'prepared') {
+            result = this.readPrimed(primed, offset, length)
+          } else {
+            throw new SessionPersistenceNotFoundError(this.id)
+          }
+        } finally {
+          // Keep the weak memo's value reachable through revision validation,
+          // including overlapping reads; completed current reads own no log.
+          if ((primed.status === 'current' || currentPath !== undefined) && this.state.primed === primed) {
+            this.state.primed = undefined
+          }
         }
       }
     } else if (this.access === 'write' && !this.state.materialized) {
@@ -155,7 +168,7 @@ export class JsonlSessionHandle implements SessionHandle {
     return result
   }
 
-  /** Read one slice from the prepared historical prefix retained by this handle. */
+  /** Read one slice from the validated prefix retained by this handle. */
   private readPrimed(source: SessionHandleReadResult, offset: number, length: number): SessionHandleReadResult {
     this.observedLength = Math.max(this.observedLength, source.events.length)
     return { eventState: source.eventState, events: source.events.slice(offset, offset + length) }
@@ -253,6 +266,8 @@ export class JsonlSessionHandle implements SessionHandle {
         /* v8 ignore next -- lock releases reject with Error */
         failures.push(releaseFailure instanceof Error ? releaseFailure : new Error(errorChain(releaseFailure)))
       }
+      this.state.primed = undefined
+      this.state.recoveredTail = undefined
       this.storage.releaseHandle(this, this.state.materialized)
       if (failures.length > 1) throw new AggregateError(failures, `session "${this.id}": close failed to drain and to release its write lock`)
       if (failures[0] !== undefined) throw failures[0]

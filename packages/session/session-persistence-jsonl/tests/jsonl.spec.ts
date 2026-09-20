@@ -7,7 +7,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { scheduler } from 'node:timers/promises'
 import { SESSION_FORMAT_VERSION, SessionLogOffset, SessionSeq, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
-import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
+import type { SessionHandle, SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import {
   assertNoRetiredHeaderFields, encodeSegment, eventLines, generationLogFilename, generationLogPath,
@@ -18,7 +18,7 @@ import {
   runPersistenceContract, meta, oneTurnLog, releasedV1OneTurnLog,
 } from '../../session-persistence/tests/contract.ts'
 import { runLiveWritePathContract } from '../../session-persistence/tests/live-write-contract.ts'
-import { LIVE_WRITE_BATCH_MAX_DELAY_MS, type JsonlSessionHandle } from '../src/storage.ts'
+import { LIVE_WRITE_BATCH_MAX_DELAY_MS, type JsonlSessionHandle, type StorageHandleState } from '../src/storage.ts'
 import { JsonlGenerationSourceChangedError } from '../src/generation.ts'
 import SessionStore from '@deepseek-ai/dsh-session'
 
@@ -294,6 +294,11 @@ function expireMemoizedLog(persistence: SessionPersistence, id: SessionId): void
   const entry = backend.coldLogMemo.get(id)
   expect(entry).toBeInstanceOf(WeakRef)
   vi.spyOn(entry!, 'deref').mockReturnValue(undefined)
+}
+
+/** Observe handle ownership without relying on garbage-collector scheduling. */
+function stateOfHandle(handle: SessionHandle): StorageHandleState {
+  return (handle as unknown as { state: StorageHandleState }).state
 }
 
 afterEach(async () => {
@@ -798,12 +803,16 @@ describe('JsonlSessionPersistence: immutable format generations', () => {
     ])
     expect((await first.read()).events).toEqual([])
     expect((await second.read()).events).toEqual([])
+    expect(stateOfHandle(first).primed?.status).toBe('prepared')
+    expect(stateOfHandle(second).primed?.status).toBe('prepared')
     expect(readTally.bySuffix.get(sourcePath)).toBe(1)
     await appendFile(sourcePath, '\n')
 
     await expect(ctx.sessionPersistence.flush()).resolves.toBeUndefined()
     await expect(stat(rawLogPath(root, header.cwd, header.id))).rejects.toMatchObject({ code: 'ENOENT' })
     await Promise.all([first.close(), second.close()])
+    expect(stateOfHandle(first).primed).toBeUndefined()
+    expect(stateOfHandle(second).primed).toBeUndefined()
     await ctx.fiber.dispose()
     ctx = new Context()
   })
@@ -1524,6 +1533,83 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
 
     expect((await reader.read(3)).events).toEqual(oneTurnLog().slice(3))
     expect(readTally.bySuffix.get(rawLogPath(root, '/work', m.id))).toBe(1)
+  })
+
+  it('holds the opened current log through the first validated read and releases it afterwards', async () => {
+    const m = meta('memo-first-read', '/work')
+    await writeLog(ctx.sessionPersistence, m, oneTurnLog())
+    const persistence = ctx.sessionPersistence as JsonlSessionPersistence
+    readTally.enabled = true
+    await using reader = await persistence.open(m.id, 'read')
+    const state = stateOfHandle(reader)
+    expect(state.primed?.events).toEqual(oneTurnLog())
+    const opened = state.primed
+    const readStoredLog = persistence.readStoredLog.bind(persistence)
+    const entered = Promise.withResolvers<undefined>()
+    const resumed = Promise.withResolvers<undefined>()
+    vi.spyOn(persistence, 'readStoredLog').mockImplementation(async (...args) => {
+      entered.resolve(undefined)
+      await resumed.promise
+      expect(state.primed).toBe(opened)
+      return readStoredLog(...args)
+    })
+    const reading = reader.read(1, 3)
+    try {
+      await entered.promise
+      expect(state.primed).toBe(opened)
+    } finally {
+      resumed.resolve(undefined)
+      await reading
+    }
+    expect((await reading).events).toEqual(oneTurnLog().slice(1, 4))
+    expect(state.primed).toBeUndefined()
+    expect(readTally.bySuffix.get(rawLogPath(root, '/work', m.id))).toBe(1)
+  })
+
+  it('releases the opened current log when its first validated read fails', async () => {
+    const m = meta('memo-first-read-fails', '/work')
+    await writeLog(ctx.sessionPersistence, m, oneTurnLog())
+    await using reader = await ctx.sessionPersistence.open(m.id, 'read')
+    const state = stateOfHandle(reader)
+    expect(state.primed?.events).toEqual(oneTurnLog())
+    const failure = new Error('current file read failed')
+    vi.spyOn(ctx.sessionPersistence as JsonlSessionPersistence, 'readStoredLog').mockRejectedValueOnce(failure)
+    await expect(reader.read()).rejects.toBe(failure)
+    expect(state.primed).toBeUndefined()
+    expect((await reader.read()).events).toEqual(oneTurnLog())
+  })
+
+  it('observes an append between current open and its first read', async () => {
+    const m = meta('memo-first-read-append', '/work')
+    await writeLog(ctx.sessionPersistence, m, oneTurnLog())
+    await using reader = await ctx.sessionPersistence.open(m.id, 'read')
+    const suffix: SessionEvent[] = [
+      { type: 'turn/start', seq: SessionSeq(6), time: 9, data: { turn: 2 } },
+      { type: 'turn/end', seq: SessionSeq(7), time: 10, data: { turn: 2, reason: { kind: 'completed' } } },
+    ]
+    await appendBatch(ctx.sessionPersistence, m.id, suffix)
+    expect((await reader.read()).events).toEqual([...oneTurnLog(), ...suffix])
+    expect(stateOfHandle(reader).primed).toBeUndefined()
+  })
+
+  it('reports a current log removed between open and its first read', async () => {
+    const m = meta('memo-first-read-missing', '/work')
+    await writeLog(ctx.sessionPersistence, m, oneTurnLog())
+    await using reader = await ctx.sessionPersistence.open(m.id, 'read')
+    await rm(rawLogPath(root, m.cwd, m.id))
+    await expect(reader.read()).rejects.toThrow(/not found/)
+    expect(stateOfHandle(reader).primed).toBeUndefined()
+  })
+
+  it.each(['read', 'write'] as const)('releases an unread current log when its %s handle closes', async (access) => {
+    const m = meta('memo-unread-close', '/work')
+    await writeLog(ctx.sessionPersistence, m, oneTurnLog())
+    const handle = await ctx.sessionPersistence.open(m.id, access)
+    const state = stateOfHandle(handle)
+    expect(state.primed?.events).toEqual(oneTurnLog())
+    await handle.close()
+    expect(state.primed).toBeUndefined()
+    expect(state.recoveredTail).toBeUndefined()
   })
 
   it.each(['read', 'write'] as const)('prepares unchanged history again after its memo is collected (%s)', async (access) => {

@@ -30,7 +30,7 @@ import {
   type SessionPersistenceSnapshot, type SessionPersistenceStatOptions,
   type SessionPersistenceRevision as PersistenceRevision,
 } from '@deepseek-ai/dsh-session-persistence'
-import { JsonlBackendTracker, JsonlSessionHandle, type StorageHandleState } from './storage.ts'
+import { JsonlBackendTracker, JsonlSessionHandle } from './storage.ts'
 import { SessionWriteLease } from './lease.ts'
 import { SESSION_FORMAT_VERSION, SessionId as makeSessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionId, SessionHeader, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
@@ -344,22 +344,12 @@ class JsonlSessionPersistence extends SessionPersistence {
         return this.tracker.adopt(new JsonlSessionHandle(this, id, pending.header, 'read', { cursor: 0, materialized: false, inheritedEventCount: pending.inheritedEventCount }))
       }
       const stored = await this.requireStoredLog(id, options?.signal)
-      let state: StorageHandleState
-      if (stored.status === 'prepared') {
-        state = {
-          cursor: 0,
-          materialized: true,
-          inheritedEventCount: stored.inheritedEventCount,
-          primed: stored,
-        }
-      } else {
-        state = {
-          cursor: 0,
-          materialized: true,
-          inheritedEventCount: stored.inheritedEventCount,
-        }
-      }
-      return this.tracker.adopt(new JsonlSessionHandle(this, id, stored.meta, 'read', state))
+      return this.tracker.adopt(new JsonlSessionHandle(this, id, stored.meta, 'read', {
+        cursor: 0,
+        materialized: true,
+        inheritedEventCount: stored.inheritedEventCount,
+        primed: stored,
+      }))
     }
     // A pending entry always belongs to an ACTIVE creator handle (close erases
     // it), so the claim below rejects that case as already owned.

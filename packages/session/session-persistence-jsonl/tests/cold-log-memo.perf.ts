@@ -17,9 +17,11 @@ const eventsPerSession = 2048
 const textCharacters = 16 * 1024
 const version = process.argv.includes('--historical') ? 0 : SESSION_FORMAT_VERSION
 const compression = process.argv.includes('--zstd') ? 'zstd' : 'none'
+const collectBeforeRead = process.argv.includes('--collect-before-read')
 const root = await mkdtemp(join(tmpdir(), 'dsh-cold-log-memory-'))
 const ctx = new Context()
 const ids = Array.from({ length: sessionCount }, (_, index) => SessionId(`synthetic-memory-${index}`))
+const readSamples: { openMs: number; readMs: number }[] = []
 
 async function seed(): Promise<void> {
   for (const id of ids) {
@@ -72,8 +74,13 @@ async function collect(): Promise<void> {
 }
 
 async function readAndClose(id: ReturnType<typeof SessionId>): Promise<WeakRef<SessionEvent>> {
+  const openedAt = performance.now()
   await using handle = await ctx.sessionPersistence.open(id, 'read')
+  const openMs = performance.now() - openedAt
+  if (collectBeforeRead) await collect()
+  const readAt = performance.now()
   const read = await handle.read()
+  readSamples.push({ openMs, readMs: performance.now() - readAt })
   assert.equal(read.events.filter(event => event.type === 'user/message').length, eventsPerSession)
   const first = read.events.find(event => event.type === 'user/message')
   assert(first?.type === 'user/message')
@@ -96,7 +103,8 @@ try {
   for (const id of ids) await readAndClose(id)
   console.log(JSON.stringify({
     node: process.version, platform: `${process.platform}/${process.arch}`,
-    version, compression, sessionCount, eventsPerSession, textCharacters, readMs, retainedHeapMiB, retainedLogs,
+    version, compression, sessionCount, eventsPerSession, textCharacters, collectBeforeRead,
+    readMs, readSamples, retainedHeapMiB, retainedLogs,
     reread: 'passed',
   }))
   if (process.argv.includes('--expect-released')) assert.equal(retainedLogs, 0, 'closed histories remain reachable')
