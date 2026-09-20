@@ -6,15 +6,17 @@
  * unknown extensions ship as octet-stream, and non-GET/HEAD is 405. Every
  * index response first passes Connection's browser authentication, then the
  * webserver's index render (structured injection rows, then raw taps).
- * Non-index assets stay public. The dist location is workspace knowledge of
- * the composing application, so `distIndex` is typically supplied through a
+ * Non-index assets stay public. Content-hashed build assets are immutable;
+ * HTML is never stored, and other files require cache revalidation.
+ * The dist location is workspace knowledge of the composing application,
+ * so `distIndex` is typically supplied through a
  * `!!js` expression, never hardcoded by a deployment.
  * @module @deepseek-ai/dsh-host-frontend-static
  */
 
 import type { ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
-import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
+import { dirname, extname, join, normalize, relative, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-client-connection'
@@ -38,6 +40,10 @@ export const Config: z<Config> = z.object({
 
 const HTML_MIME = 'text/html; charset=utf-8'
 
+// Vite's emitted assets and preview chunks use an eight-character content hash.
+const HASHED_ASSET = /^(?:assets|preview)\/(?:[^/]+\/)*[^/]+-[A-Za-z0-9_-]{8}\.[a-z0-9]+(?:\.map)?$/u
+const IMMUTABLE_CACHE = 'public, max-age=31536000, immutable'
+
 const MIME: Record<string, string> = {
   '.html': HTML_MIME,
   '.js': 'text/javascript; charset=utf-8',
@@ -59,7 +65,8 @@ const STATIC_MISS_CODES: ReadonlySet<string | undefined> = new Set([
 ])
 
 /**
- * Serve one GET/HEAD static request from the dist root.
+ * Serve one GET/HEAD static request from the dist root. Content-hashed build
+ * assets allow immutable caching; HTML is no-store and other files are no-cache.
  * @param pathname - decoded URL pathname of the request.
  * @param res - the node:http response to write.
  * @param distRoot - absolute dist root directory (resolved by the caller).
@@ -101,7 +108,11 @@ export async function serveStatic(
     res.end()
     return
   }
-  res.writeHead(200, { 'content-type': type })
+  const assetPath = relative(distRoot, target).split(sep).join('/')
+  const cacheControl = type === HTML_MIME
+    ? 'no-store'
+    : HASHED_ASSET.test(assetPath) ? IMMUTABLE_CACHE : 'no-cache'
+  res.writeHead(200, { 'content-type': type, 'cache-control': cacheControl })
   res.end(body)
 }
 

@@ -43,6 +43,8 @@ Requests are served from the dist root (the directory containing `distIndex`). T
 
 Root and configured-index responses call `ctx.connection.authorizeIndex` before reading HTML. A valid process token receives a 303 redirect plus the persistent browser cookie; an existing valid cookie serves the index; every other index request receives the Connection-owned 401 response. Non-index files remain public static assets. Connection owns the token, cookie, expiry, and signing-record semantics.
 
+HTML responses use `Cache-Control: no-store` so each navigation receives current boot injections. Vite build assets under `assets/` and `preview/` whose filenames contain the eight-character content hash use `public, max-age=31536000, immutable`, including nested fonts, language chunks, and source maps. Browsers can reuse those bytes across reloads; a rebuild changes the URL. Other files use `no-cache` and require a server request before reuse.
+
 ### Observable failures
 
 Traversal returns 403 rather than an error page. An absent or non-file target inside the dist root returns an empty 404, so a stale link or a mistyped pathname is an explicit failure rather than a silent SPA fallback. Claiming the seat twice throws, and while the seat is unclaimed the webserver answers 404 — which is what a browser sees if this plugin's fiber is disposed.

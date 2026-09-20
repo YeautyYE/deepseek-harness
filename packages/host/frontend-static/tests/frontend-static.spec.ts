@@ -8,7 +8,7 @@
 
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
@@ -94,6 +94,41 @@ async function request(port: number, path: string, init?: RequestInit): Promise<
 }
 
 describe('real Loader composition', () => {
+  it('caches content-hashed build assets while mutable files require another request', async () => {
+    const loaded = await loadComposition()
+    const origin = `http://127.0.0.1:${String(loaded.webServer.port)}`
+    const cases: [string, string][] = [
+      ['assets/index-8VXBH-f-.js', 'public, max-age=31536000, immutable'],
+      ['assets/index-lP1BfJ4l.css', 'public, max-age=31536000, immutable'],
+      ['assets/vendor-CCJJTK99.js.map', 'public, max-age=31536000, immutable'],
+      ['assets/langs/typescript-C0xS9mPB.js', 'public, max-age=31536000, immutable'],
+      ['assets/fonts/KaTeX_Typewriter-Regular-C0xS9mPB.woff', 'public, max-age=31536000, immutable'],
+      ['preview/bootstrap-Abcd1234.js', 'public, max-age=31536000, immutable'],
+      ['assets/index.js', 'no-cache'],
+      ['assets/index-Abcd123.js', 'no-cache'],
+      ['assets/index-Abcd12345.js', 'no-cache'],
+      ['other/index-Abcd1234.js', 'no-cache'],
+      ['app.js', 'no-cache'],
+      ['manifest.webmanifest', 'no-cache'],
+      ['preview.html', 'no-store'],
+    ]
+    for (const [path, cacheControl] of cases) {
+      const target = join(root!, 'dist', path)
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, 'asset')
+      for (const method of ['GET', 'HEAD']) {
+        const response = await fetch(`${origin}/${path}`, { method })
+        expect(response.status).toBe(200)
+        expect(response.headers.get('cache-control'), path).toBe(cacheControl)
+        expect(await response.text()).toBe(method === 'HEAD' ? '' : 'asset')
+      }
+    }
+    const missing = await fetch(`${origin}/assets/missing-Abcd1234.js`)
+    expect(missing.status).toBe(404)
+    expect(missing.headers.get('cache-control')).toBeNull()
+    await missing.text()
+  })
+
   it('serves explicit index entries and files while preserving HTTP error semantics', { timeout: 60_000 }, async () => {
     const loaded = await loadComposition()
     const unloaded = [...loaded.loader.entries()]
@@ -142,11 +177,13 @@ describe('real Loader composition', () => {
     // Only the root and index path render index.html through registered taps.
     const untap = server.tapIndex(html => html.replace('<head>', '<head><script>window.__T__=1</script>'))
     for (const path of ['/', '/index.html', '/?view=test']) {
-      const got = await request(port, path, authenticated())
-      expect(got.status).toBe(200)
-      expect(got.type).toBe('text/html; charset=utf-8')
-      expect(got.body).toContain('__T__')
-      expect(got.body).toContain('shell')
+      const response = await fetch(`http://127.0.0.1:${String(port)}${path}`, authenticated())
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8')
+      const body = await response.text()
+      expect(body).toContain('__T__')
+      expect(body).toContain('shell')
     }
     expect(await request(port, '/', authenticated({ method: 'HEAD' }))).toEqual({
       status: 200,
